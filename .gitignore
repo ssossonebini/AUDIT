@@ -30,3 +30,14 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+
+# Database
+*.db
+*.db-journal
+
+# Downloaded PDFs
+downloads/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
