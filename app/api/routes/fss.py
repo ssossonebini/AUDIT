@@ -66,15 +66,36 @@ def get_article(article_id: int, db: Session = Depends(get_db)):
 
 @router.post("/articles/{article_id}/summarize")
 def summarize_article(article_id: int, db: Session = Depends(get_db)):
-    """PDF 내용을 Claude AI로 요약"""
+    """PDF 내용을 Claude AI로 요약 (raw_text 없으면 실시간 다운로드)"""
     if not settings.ANTHROPIC_API_KEY:
         raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY가 설정되지 않았습니다. .env 파일에 키를 추가해주세요.")
 
     article = db.query(FssArticle).filter(FssArticle.id == article_id).first()
     if not article:
         raise HTTPException(status_code=404, detail="게시글을 찾을 수 없습니다.")
+
+    # raw_text가 없으면 PDF 실시간 다운로드
     if not article.raw_text:
-        raise HTTPException(status_code=404, detail="PDF 텍스트가 없습니다. 먼저 크롤링을 실행해주세요.")
+        try:
+            session = fss_scraper._session()
+            detail = fss_scraper.fetch_article_detail(article.ntt_id, session)
+            raw_text = ""
+            for attachment in detail.get("attachments", []):
+                url = attachment["url"]
+                if ".pdf" in url.lower() or "fileDown" in url:
+                    path = fss_scraper.download_pdf(url, article.ntt_id, session)
+                    if path:
+                        raw_text = pdf_parser.extract_text(path)
+                        break
+            if not raw_text:
+                raise HTTPException(status_code=404, detail="PDF 파일을 찾을 수 없습니다. 원문 보기에서 직접 확인해주세요.")
+            # DB에 저장
+            article.raw_text = raw_text[:50000]
+            db.commit()
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"PDF 다운로드 중 오류: {str(e)}")
 
     client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
     text = article.raw_text[:30000]
