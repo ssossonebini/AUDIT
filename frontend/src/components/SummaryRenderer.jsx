@@ -1,229 +1,164 @@
 /**
- * AI 요약 텍스트(마크다운)를 구조화된 UI로 렌더링
- * ## 헤더, **bold**, | 표, - 목록을 파싱
+ * AI 요약 결과를 구조화된 UI로 렌더링
+ * - structured(JSON) 우선, 없으면 plain text fallback
  */
-export default function SummaryRenderer({ text }) {
-  const sections = parseMarkdown(text)
+export default function SummaryRenderer({ text, structured }) {
+  if (structured) return <StructuredView data={structured} />
+  return <PlainView text={text} />
+}
+
+/* ── 구조화 뷰 (JSON 파싱 성공 시) ─────────────────── */
+
+function StructuredView({ data }) {
+  const { overview, issues = [], implications } = data
+
   return (
-    <div style={{ fontSize: 14, color: '#222', lineHeight: 1.8 }}>
-      {sections.map((section, i) => renderSection(section, i))}
-    </div>
-  )
-}
+    <div style={{ fontSize: 14, color: '#222' }}>
 
-/* ── 파서 ──────────────────────────────────────────── */
-
-function parseMarkdown(text) {
-  const lines = text.split('\n')
-  const sections = []
-  let current = null
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]
-
-    // ## 헤더
-    const h2 = line.match(/^##\s+(.+)/)
-    if (h2) {
-      if (current) sections.push(current)
-      current = { type: 'section', title: h2[1].trim(), children: [] }
-      continue
-    }
-
-    // ### 소헤더
-    const h3 = line.match(/^###\s+(.+)/)
-    if (h3) {
-      if (!current) { current = { type: 'section', title: '', children: [] } }
-      current.children.push({ type: 'h3', text: h3[1].trim() })
-      continue
-    }
-
-    // 표 행: | col | col |
-    if (line.trim().startsWith('|')) {
-      const isSep = /^\|[-\s|:]+\|$/.test(line.trim())
-      if (isSep) continue
-
-      // 앞 블록이 table이면 행 추가
-      const last = current?.children?.at(-1)
-      if (last?.type === 'table') {
-        last.rows.push(parseCells(line))
-      } else {
-        const row = parseCells(line)
-        if (!current) { current = { type: 'section', title: '', children: [] } }
-        current.children.push({ type: 'table', header: row, rows: [] })
-      }
-      continue
-    }
-
-    // - 목록 항목
-    const li = line.match(/^-\s+(.+)/)
-    if (li) {
-      if (!current) { current = { type: 'section', title: '', children: [] } }
-      const last = current.children.at(-1)
-      if (last?.type === 'list') {
-        last.items.push(li[1].trim())
-      } else {
-        current.children.push({ type: 'list', items: [li[1].trim()] })
-      }
-      continue
-    }
-
-    // 구분선
-    if (/^---+$/.test(line.trim())) continue
-
-    // 빈 줄
-    if (!line.trim()) continue
-
-    // 일반 텍스트
-    if (!current) { current = { type: 'section', title: '', children: [] } }
-    current.children.push({ type: 'p', text: line.trim() })
-  }
-
-  if (current) sections.push(current)
-  return sections
-}
-
-function parseCells(line) {
-  return line
-    .split('|')
-    .map(c => c.trim())
-    .filter(Boolean)
-}
-
-/* ── 렌더러 ─────────────────────────────────────────── */
-
-function renderSection(section, key) {
-  return (
-    <div key={key} style={styles.section}>
-      {section.title && (
-        <div style={styles.sectionTitle}>{section.title}</div>
+      {/* 1. 전체 개요 */}
+      {overview && (
+        <Section title="1. 전체 개요">
+          <p style={s.p}>{overview}</p>
+        </Section>
       )}
-      {section.children.map((child, i) => renderChild(child, i))}
+
+      {/* 2. 주요 회계이슈 목록 */}
+      {issues.length > 0 && (
+        <Section title="2. 주요 회계이슈 목록">
+          <div style={{ overflowX: 'auto' }}>
+            <table style={s.table}>
+              <thead>
+                <tr>
+                  <th style={{ ...s.th, width: 50 }}>번호</th>
+                  <th style={{ ...s.th, width: 200 }}>이슈명</th>
+                  <th style={s.th}>설명</th>
+                </tr>
+              </thead>
+              <tbody>
+                {issues.map((issue, i) => (
+                  <tr key={i} style={i % 2 === 0 ? s.trEven : s.trOdd}>
+                    <td style={{ ...s.td, textAlign: 'center', fontWeight: 700, color: '#1a3a6c' }}>
+                      {issue.number}
+                    </td>
+                    <td style={{ ...s.td, fontWeight: 600, whiteSpace: 'nowrap', color: '#1a3a6c' }}>
+                      {issue.title}
+                    </td>
+                    <td style={{ ...s.td, lineHeight: 1.7 }}>
+                      {issue.description}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Section>
+      )}
+
+      {/* 3. 기업 및 감사인 시사점 */}
+      {implications && (
+        <Section title="3. 기업 및 감사인에 대한 주요 시사점">
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <ImplicationBox title="기업 대상" items={implications.companies} color="#1a3a6c" />
+            <ImplicationBox title="감사인 대상" items={implications.auditors} color="#b45309" />
+          </div>
+        </Section>
+      )}
     </div>
   )
 }
 
-function renderChild(child, key) {
-  if (child.type === 'h3') {
-    return <div key={key} style={styles.h3}>{child.text}</div>
-  }
+function Section({ title, children }) {
+  return (
+    <div style={s.section}>
+      <div style={s.sectionTitle}>{title}</div>
+      {children}
+    </div>
+  )
+}
 
-  if (child.type === 'table') {
-    return (
-      <div key={key} style={{ overflowX: 'auto', marginBottom: 12 }}>
-        <table style={styles.table}>
-          <thead>
-            <tr>
-              {child.header.map((h, i) => (
-                <th key={i} style={styles.th}>{renderInline(h)}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {child.rows.map((row, ri) => (
-              <tr key={ri} style={ri % 2 === 0 ? styles.trEven : styles.trOdd}>
-                {row.map((cell, ci) => (
-                  <td key={ci} style={ci === 0 ? styles.tdFirst : styles.td}>
-                    {renderInline(cell)}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    )
-  }
-
-  if (child.type === 'list') {
-    return (
-      <ul key={key} style={styles.ul}>
-        {child.items.map((item, i) => (
-          <li key={i} style={styles.li}>{renderInline(item)}</li>
+function ImplicationBox({ title, items = [], color }) {
+  return (
+    <div style={{ ...s.implBox, borderTop: `3px solid ${color}` }}>
+      <div style={{ ...s.implTitle, color }}>{title}</div>
+      <ul style={s.ul}>
+        {items.map((item, i) => (
+          <li key={i} style={s.li}>{item}</li>
         ))}
       </ul>
-    )
-  }
-
-  if (child.type === 'p') {
-    return <p key={key} style={styles.p}>{renderInline(child.text)}</p>
-  }
-
-  return null
+    </div>
+  )
 }
 
-/** **bold** 인라인 파싱 */
-function renderInline(text) {
-  const parts = text.split(/(\*\*[^*]+\*\*)/)
-  if (parts.length === 1) return text
-  return parts.map((part, i) => {
-    const m = part.match(/^\*\*(.+)\*\*$/)
-    return m ? <strong key={i}>{m[1]}</strong> : part
-  })
+/* ── Plain text fallback ────────────────────────────── */
+
+function PlainView({ text }) {
+  return (
+    <div style={{ fontSize: 14, color: '#333', lineHeight: 1.9, whiteSpace: 'pre-line' }}>
+      {text}
+    </div>
+  )
 }
 
 /* ── 스타일 ─────────────────────────────────────────── */
 
-const styles = {
+const s = {
   section: {
     marginBottom: 20,
   },
   sectionTitle: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: 700,
     color: '#1a3a6c',
     borderLeft: '4px solid #1a3a6c',
     paddingLeft: 10,
-    marginBottom: 12,
+    marginBottom: 10,
     lineHeight: 1.5,
   },
-  h3: {
-    fontSize: 13,
-    fontWeight: 700,
-    color: '#334',
-    marginBottom: 6,
-    marginTop: 10,
+  p: {
+    margin: '0 0 8px',
+    lineHeight: 1.8,
+    color: '#333',
   },
   table: {
     width: '100%',
     borderCollapse: 'collapse',
     fontSize: 13,
-    marginBottom: 4,
+    border: '1px solid #dde2ea',
   },
   th: {
     background: '#1a3a6c',
     color: '#fff',
-    padding: '8px 12px',
+    padding: '9px 14px',
     textAlign: 'left',
     fontWeight: 700,
-    whiteSpace: 'nowrap',
   },
   trEven: { background: '#fff' },
   trOdd: { background: '#f4f7fb' },
   td: {
-    padding: '8px 12px',
+    padding: '9px 14px',
     borderBottom: '1px solid #dde2ea',
     verticalAlign: 'top',
-    lineHeight: 1.6,
+    fontSize: 13,
   },
-  tdFirst: {
-    padding: '8px 12px',
-    borderBottom: '1px solid #dde2ea',
-    verticalAlign: 'top',
-    lineHeight: 1.6,
-    fontWeight: 600,
-    whiteSpace: 'nowrap',
-    color: '#1a3a6c',
+  implBox: {
+    background: '#fff',
+    border: '1px solid #dde2ea',
+    borderRadius: 8,
+    padding: '14px 16px',
+  },
+  implTitle: {
+    fontWeight: 700,
+    fontSize: 13,
+    marginBottom: 8,
   },
   ul: {
-    margin: '4px 0 8px 0',
-    paddingLeft: 20,
+    margin: 0,
+    paddingLeft: 18,
   },
   li: {
-    marginBottom: 4,
-    lineHeight: 1.7,
-  },
-  p: {
-    margin: '0 0 8px',
-    lineHeight: 1.8,
+    marginBottom: 5,
+    fontSize: 13,
+    lineHeight: 1.65,
+    color: '#333',
   },
 }

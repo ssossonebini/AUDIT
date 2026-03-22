@@ -102,16 +102,24 @@ def summarize_article(article_id: int, db: Session = Depends(get_db)):
 
     message = client.messages.create(
         model="claude-haiku-4-5-20251001",
-        max_tokens=1024,
+        max_tokens=2048,
         messages=[
             {
                 "role": "user",
                 "content": f"""다음은 금융감독원의 중점심사 회계이슈 보도자료 PDF 내용입니다.
-아래 항목으로 핵심 내용을 한국어로 요약해주세요:
+아래 JSON 형식으로만 응답하세요. JSON 외 다른 텍스트는 절대 포함하지 마세요.
 
-1. 전체 개요 (2-3문장)
-2. 주요 회계이슈 목록 (각 이슈명과 한 줄 설명)
-3. 기업 및 감사인에 대한 주요 시사점
+{{
+  "overview": "전체 개요 2-3문장",
+  "issues": [
+    {{"number": 1, "title": "이슈명", "description": "한 줄 설명"}},
+    ...
+  ],
+  "implications": {{
+    "companies": ["기업 대상 시사점1", "시사점2", ...],
+    "auditors": ["감사인 대상 시사점1", "시사점2", ...]
+  }}
+}}
 
 PDF 내용:
 {text}"""
@@ -119,7 +127,17 @@ PDF 내용:
         ]
     )
 
-    return {"summary": message.content[0].text}
+    import json as json_lib
+    raw = message.content[0].text.strip()
+    # 코드블록 제거
+    if raw.startswith("```"):
+        raw = re.sub(r"^```[a-z]*\n?", "", raw)
+        raw = re.sub(r"\n?```$", "", raw)
+    try:
+        structured = json_lib.loads(raw)
+        return {"summary": raw, "structured": structured}
+    except Exception:
+        return {"summary": raw, "structured": None}
 
 
 @router.post("/crawl", response_model=CrawlStatus)

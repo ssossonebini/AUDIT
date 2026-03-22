@@ -6,12 +6,14 @@ export default function ArticleDetail({ articleId, onBack }) {
   const [article, setArticle] = useState(null)
   const [loading, setLoading] = useState(true)
   const [aiSummary, setAiSummary] = useState(null)
+  const [aiStructured, setAiStructured] = useState(null)
   const [summarizing, setSummarizing] = useState(false)
   const [summarizeError, setSummarizeError] = useState(null)
 
   useEffect(() => {
     setLoading(true)
     setAiSummary(null)
+    setAiStructured(null)
     setSummarizeError(null)
     getArticle(articleId)
       .then(setArticle)
@@ -22,9 +24,11 @@ export default function ArticleDetail({ articleId, onBack }) {
     setSummarizing(true)
     setSummarizeError(null)
     setAiSummary(null)
+    setAiStructured(null)
     try {
       const result = await summarizeArticle(articleId)
       setAiSummary(result.summary)
+      setAiStructured(result.structured ?? null)
     } catch (e) {
       const msg = e.response?.data?.detail || 'AI 요약 중 오류가 발생했습니다.'
       setSummarizeError(msg)
@@ -75,7 +79,7 @@ export default function ArticleDetail({ articleId, onBack }) {
               <div style={{ fontWeight: 700, fontSize: 15, color: '#1a3a6c', marginBottom: 16 }}>
                 ✨ AI 요약 결과
               </div>
-              <SummaryRenderer text={aiSummary} />
+              <SummaryRenderer text={aiSummary} structured={aiStructured} />
             </div>
           )}
         </div>
