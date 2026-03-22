@@ -107,19 +107,11 @@ def summarize_article(article_id: int, db: Session = Depends(get_db)):
             {
                 "role": "user",
                 "content": f"""다음은 금융감독원의 중점심사 회계이슈 보도자료 PDF 내용입니다.
-아래 JSON 형식으로만 응답하세요. JSON 외 다른 텍스트는 절대 포함하지 마세요.
+아래 항목으로 핵심 내용을 한국어로 요약해주세요:
 
-{{
-  "overview": "전체 개요 2-3문장",
-  "issues": [
-    {{"number": 1, "title": "이슈명", "description": "한 줄 설명"}},
-    ...
-  ],
-  "implications": {{
-    "companies": ["기업 대상 시사점1", "시사점2", ...],
-    "auditors": ["감사인 대상 시사점1", "시사점2", ...]
-  }}
-}}
+1. 전체 개요 (2-3문장)
+2. 주요 회계이슈 목록 (각 이슈명과 한 줄 설명)
+3. 기업 및 감사인에 대한 주요 시사점
 
 PDF 내용:
 {text}"""
@@ -127,17 +119,96 @@ PDF 내용:
         ]
     )
 
-    import json as json_lib
     raw = message.content[0].text.strip()
-    # 코드블록 제거
-    if raw.startswith("```"):
-        raw = re.sub(r"^```[a-z]*\n?", "", raw)
-        raw = re.sub(r"\n?```$", "", raw)
-    try:
-        structured = json_lib.loads(raw)
-        return {"summary": raw, "structured": structured}
-    except Exception:
-        return {"summary": raw, "structured": None}
+    structured = _parse_markdown_summary(raw)
+    return {"summary": raw, "structured": structured}
+
+
+def _parse_markdown_summary(text: str) -> dict:
+    """AI가 반환한 마크다운 텍스트를 구조화된 dict로 변환"""
+    lines = text.splitlines()
+
+    overview = ""
+    issues = []
+    companies = []
+    auditors = []
+
+    section = None  # "overview" | "issues" | "companies" | "auditors"
+    overview_lines = []
+
+    for line in lines:
+        stripped = line.strip()
+
+        # 섹션 헤더 감지
+        if re.search(r"전체\s*개요", stripped):
+            section = "overview"
+            continue
+        if re.search(r"회계이슈\s*목록|주요\s*회계이슈", stripped):
+            section = "issues"
+            continue
+        if re.search(r"기업\s*(대상|에\s*대한)", stripped):
+            section = "companies"
+            continue
+        if re.search(r"감사인\s*(대상|에\s*대한)", stripped):
+            section = "auditors"
+            continue
+        if re.search(r"시사점", stripped) and section not in ("companies", "auditors"):
+            section = "companies"
+            continue
+
+        # 구분선·빈 줄·소제목 skip
+        if not stripped or re.match(r"^-{3,}$", stripped):
+            continue
+        if re.match(r"^#{1,4}\s", stripped):
+            continue
+
+        if section == "overview":
+            clean = re.sub(r"\*\*([^*]+)\*\*", r"\1", stripped)
+            overview_lines.append(clean)
+
+        elif section == "issues":
+            # 표 행: | 이슈명 | 설명 |
+            if stripped.startswith("|"):
+                cells = [c.strip() for c in stripped.split("|") if c.strip()]
+                if len(cells) >= 2 and not re.match(r"^[-:]+$", cells[0]):
+                    title = re.sub(r"\*\*([^*]+)\*\*", r"\1", cells[0])
+                    desc = re.sub(r"\*\*([^*]+)\*\*", r"\1", cells[-1])
+                    if not re.match(r"^(이슈|순번|번호|No)", title):
+                        issues.append({
+                            "number": len(issues) + 1,
+                            "title": title,
+                            "description": desc,
+                        })
+            # 번호 목록: ① 이슈명: 설명 or - **이슈**: 설명
+            else:
+                m = re.match(r"^[①②③④⑤⑥⑦⑧⑨⑩\-\*\d\.]+\s*\*?\*?([^*:：]+)\*?\*?[：:]\s*(.+)", stripped)
+                if m:
+                    title = m.group(1).strip()
+                    desc = re.sub(r"\*\*([^*]+)\*\*", r"\1", m.group(2).strip())
+                    issues.append({"number": len(issues) + 1, "title": title, "description": desc})
+
+        elif section == "companies":
+            if stripped.startswith("-") or stripped.startswith("•"):
+                item = re.sub(r"^[-•]\s*", "", stripped)
+                item = re.sub(r"\*\*([^*]+)\*\*", r"\1", item)
+                companies.append(item)
+
+        elif section == "auditors":
+            if stripped.startswith("-") or stripped.startswith("•"):
+                item = re.sub(r"^[-•]\s*", "", stripped)
+                item = re.sub(r"\*\*([^*]+)\*\*", r"\1", item)
+                auditors.append(item)
+
+    overview = " ".join(overview_lines[:4])
+
+    return {
+        "overview": overview,
+        "issues": issues,
+        "implications": {
+            "companies": companies,
+            "auditors": auditors,
+        },
+    }
 
 
 @router.post("/crawl", response_model=CrawlStatus)
