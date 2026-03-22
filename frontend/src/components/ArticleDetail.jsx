@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { getArticle, summarizeArticle } from '../api/fss'
+import SummaryRenderer from './SummaryRenderer'
 
 export default function ArticleDetail({ articleId, onBack }) {
   const [article, setArticle] = useState(null)
@@ -71,12 +72,10 @@ export default function ArticleDetail({ articleId, onBack }) {
 
           {aiSummary && (
             <div style={{ marginTop: 16, padding: '20px 24px', background: '#f0f7ff', border: '1px solid #b3d4ff', borderRadius: 10 }}>
-              <div style={{ fontWeight: 700, fontSize: 15, color: '#1a3a6c', marginBottom: 12 }}>
+              <div style={{ fontWeight: 700, fontSize: 15, color: '#1a3a6c', marginBottom: 16 }}>
                 ✨ AI 요약 결과
               </div>
-              <div style={{ fontSize: 14, color: '#333', lineHeight: 1.9, whiteSpace: 'pre-line' }}>
-                {aiSummary}
-              </div>
+              <SummaryRenderer text={aiSummary} />
             </div>
           )}
         </div>
