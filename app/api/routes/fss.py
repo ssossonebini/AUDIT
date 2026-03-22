@@ -2,6 +2,7 @@
 금융감독원 중점심사 회계이슈 API
 """
 import logging
+import re
 import time
 from typing import Optional
 
