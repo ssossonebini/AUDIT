@@ -1,16 +1,36 @@
 import { useEffect, useState } from 'react'
-import { getArticle } from '../api/fss'
+import { getArticle, summarizeArticle } from '../api/fss'
 
 export default function ArticleDetail({ articleId, onBack }) {
   const [article, setArticle] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [aiSummary, setAiSummary] = useState(null)
+  const [summarizing, setSummarizing] = useState(false)
+  const [summarizeError, setSummarizeError] = useState(null)
 
   useEffect(() => {
     setLoading(true)
+    setAiSummary(null)
+    setSummarizeError(null)
     getArticle(articleId)
       .then(setArticle)
       .finally(() => setLoading(false))
   }, [articleId])
+
+  const handleSummarize = async () => {
+    setSummarizing(true)
+    setSummarizeError(null)
+    setAiSummary(null)
+    try {
+      const result = await summarizeArticle(articleId)
+      setAiSummary(result.summary)
+    } catch (e) {
+      const msg = e.response?.data?.detail || 'AI 요약 중 오류가 발생했습니다.'
+      setSummarizeError(msg)
+    } finally {
+      setSummarizing(false)
+    }
+  }
 
   if (loading) return <div style={centerStyle}>불러오는 중...</div>
   if (!article) return <div style={centerStyle}>게시글을 찾을 수 없습니다.</div>
@@ -31,6 +51,34 @@ export default function ArticleDetail({ articleId, onBack }) {
           <a href={article.url} target="_blank" rel="noreferrer" style={{ color: '#1a3a6c' }}>
             🔗 원문 보기
           </a>
+        </div>
+
+        {/* AI 요약 버튼 */}
+        <div style={{ marginBottom: 28 }}>
+          <button
+            onClick={handleSummarize}
+            disabled={summarizing}
+            style={summarizeBtnStyle(summarizing)}
+          >
+            {summarizing ? '⏳ AI 요약 중...' : '✨ AI로 PDF 요약하기'}
+          </button>
+
+          {summarizeError && (
+            <div style={{ marginTop: 12, padding: '12px 16px', background: '#fff5f5', border: '1px solid #fcc', borderRadius: 8, color: '#c00', fontSize: 13 }}>
+              {summarizeError}
+            </div>
+          )}
+
+          {aiSummary && (
+            <div style={{ marginTop: 16, padding: '20px 24px', background: '#f0f7ff', border: '1px solid #b3d4ff', borderRadius: 10 }}>
+              <div style={{ fontWeight: 700, fontSize: 15, color: '#1a3a6c', marginBottom: 12 }}>
+                ✨ AI 요약 결과
+              </div>
+              <div style={{ fontSize: 14, color: '#333', lineHeight: 1.9, whiteSpace: 'pre-line' }}>
+                {aiSummary}
+              </div>
+            </div>
+          )}
         </div>
 
         {article.issues && article.issues.length > 0 && (
@@ -102,3 +150,14 @@ const tagStyle = {
   padding: '3px 12px',
   borderRadius: 12,
 }
+const summarizeBtnStyle = (disabled) => ({
+  background: disabled ? '#8a9ab0' : '#1a3a6c',
+  color: '#fff',
+  border: 'none',
+  borderRadius: 8,
+  padding: '10px 20px',
+  fontSize: 14,
+  fontWeight: 700,
+  cursor: disabled ? 'not-allowed' : 'pointer',
+  transition: 'background 0.2s',
+})

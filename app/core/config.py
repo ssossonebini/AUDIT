@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 from pydantic_settings import BaseSettings
 
 
@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     DESCRIPTION: str = "AUDIT Web Application"
     API_V1_STR: str = "/api/v1"
     ALLOWED_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:8000"]
+    ANTHROPIC_API_KEY: Optional[str] = None
 
     class Config:
         env_file = ".env"

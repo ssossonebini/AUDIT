@@ -5,9 +5,11 @@ import logging
 import time
 from typing import Optional
 
+import anthropic
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.db.database import get_db
 from app.db.models import FssArticle, AuditIssue
 from app.schemas.fss import FssArticleSchema, FssArticleListItem, CrawlStatus
@@ -60,6 +62,43 @@ def get_article(article_id: int, db: Session = Depends(get_db)):
     if not article:
         raise HTTPException(status_code=404, detail="게시글을 찾을 수 없습니다.")
     return article
+
+
+@router.post("/articles/{article_id}/summarize")
+def summarize_article(article_id: int, db: Session = Depends(get_db)):
+    """PDF 내용을 Claude AI로 요약"""
+    if not settings.ANTHROPIC_API_KEY:
+        raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY가 설정되지 않았습니다. .env 파일에 키를 추가해주세요.")
+
+    article = db.query(FssArticle).filter(FssArticle.id == article_id).first()
+    if not article:
+        raise HTTPException(status_code=404, detail="게시글을 찾을 수 없습니다.")
+    if not article.raw_text:
+        raise HTTPException(status_code=404, detail="PDF 텍스트가 없습니다. 먼저 크롤링을 실행해주세요.")
+
+    client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+    text = article.raw_text[:30000]
+
+    message = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=1024,
+        messages=[
+            {
+                "role": "user",
+                "content": f"""다음은 금융감독원의 중점심사 회계이슈 보도자료 PDF 내용입니다.
+아래 항목으로 핵심 내용을 한국어로 요약해주세요:
+
+1. 전체 개요 (2-3문장)
+2. 주요 회계이슈 목록 (각 이슈명과 한 줄 설명)
+3. 기업 및 감사인에 대한 주요 시사점
+
+PDF 내용:
+{text}"""
+            }
+        ]
+    )
+
+    return {"summary": message.content[0].text}
 
 
 @router.post("/crawl", response_model=CrawlStatus)
