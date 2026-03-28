@@ -36,6 +36,12 @@ export default function Header({ activeTab, onTabChange }) {
           label="🇺🇸 PCAOB"
           subLabel="Staff Publications"
         />
+        <TabButton
+          active={activeTab === 'sec'}
+          onClick={() => onTabChange?.('sec')}
+          label="🇺🇸 SEC"
+          subLabel="OCA 연설문"
+        />
       </div>
     </header>
   )

@@ -52,3 +52,20 @@ class PcaobPublication(Base):
     raw_text = Column(Text)                            # PDF 전체 텍스트
     summary = Column(Text)                             # 요약 텍스트
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class SecSpeech(Base):
+    """SEC 회계·감사 관련 연설문 / 성명서"""
+    __tablename__ = "sec_speeches"
+
+    id = Column(Integer, primary_key=True, index=True)
+    speech_id = Column(String, unique=True, index=True)  # 고유 slug
+    title = Column(String, nullable=False)
+    pub_date = Column(String)                            # 게시일 (예: 2024-12-09)
+    year = Column(Integer, index=True)                   # 연도
+    url = Column(String)                                 # 원문 URL (HTML 페이지)
+    speaker = Column(String)                             # 발표자
+    category = Column(String)                            # AICPA Conference / Staff Statement 등
+    raw_text = Column(Text)                              # HTML에서 추출한 본문 텍스트
+    summary = Column(Text)                               # 요약 텍스트
+    created_at = Column(DateTime, default=datetime.utcnow)
