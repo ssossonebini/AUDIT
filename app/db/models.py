@@ -34,3 +34,21 @@ class AuditIssue(Base):
     description = Column(Text)         # 상세 내용
 
     article = relationship("FssArticle", back_populates="issues")
+
+
+class PcaobPublication(Base):
+    """PCAOB Staff Publications"""
+    __tablename__ = "pcaob_publications"
+
+    id = Column(Integer, primary_key=True, index=True)
+    pub_id = Column(String, unique=True, index=True)   # 고유 slug
+    title = Column(String, nullable=False)
+    pub_date = Column(String)                          # 게시일 (예: 2024-12-09)
+    year = Column(Integer, index=True)                 # 연도
+    url = Column(String)                               # 게시물 페이지 URL
+    pdf_url = Column(String)                           # 직접 PDF URL
+    category = Column(String)                          # Spotlight / Staff Guidance 등
+    pdf_path = Column(String)                          # 로컬 저장 경로
+    raw_text = Column(Text)                            # PDF 전체 텍스트
+    summary = Column(Text)                             # 요약 텍스트
+    created_at = Column(DateTime, default=datetime.utcnow)
