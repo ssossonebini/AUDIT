@@ -13,13 +13,17 @@ import EsmaReportDetail from './components/EsmaReportDetail'
 import FssCaseCrawlPanel from './components/FssCaseCrawlPanel'
 import FssCaseCard from './components/FssCaseCard'
 import FssCaseDetail from './components/FssCaseDetail'
+import KasbCrawlPanel from './components/KasbCrawlPanel'
+import KasbStandardCard from './components/KasbStandardCard'
+import KasbStandardDetail from './components/KasbStandardDetail'
 import { getYears, getArticles } from './api/fss'
 import { getPcaobYears, getPcaobPublications } from './api/pcaob'
 import { getEsmaYears, getEsmaReports } from './api/esma'
 import { getFssCaseYears, getFssCases } from './api/fssCase'
+import { getKasbEffectiveYears, getKasbStandards } from './api/kasb'
 
 function App() {
-  const [activeTab, setActiveTab] = useState('fss') // 'fss' | 'fss-case' | 'pcaob' | 'esma'
+  const [activeTab, setActiveTab] = useState('fss') // 'fss' | 'fss-case' | 'kasb' | 'pcaob' | 'esma'
 
   return (
     <div style={{ minHeight: '100vh', background: '#f4f6f9' }}>
@@ -27,6 +31,7 @@ function App() {
       <main style={{ maxWidth: 1000, margin: '0 auto', padding: '32px 20px' }}>
         {activeTab === 'fss' && <FssView />}
         {activeTab === 'fss-case' && <FssCaseView />}
+        {activeTab === 'kasb' && <KasbView />}
         {activeTab === 'pcaob' && <PcaobView />}
         {activeTab === 'esma' && <EsmaView />}
       </main>
@@ -182,6 +187,102 @@ function FssCaseView() {
       )}
     </>
   )
+}
+
+/* ── KASB 기준서 뷰 ──────────────────────────────────── */
+
+function KasbView() {
+  const [years, setYears] = useState([])
+  const [selectedYear, setSelectedYear] = useState(null)
+  const [standards, setStandards] = useState([])
+  const [selectedStdId, setSelectedStdId] = useState(null)
+  const [loading, setLoading] = useState(false)
+
+  const loadData = useCallback(async () => {
+    setLoading(true)
+    try {
+      const [yrs, stds] = await Promise.all([
+        getKasbEffectiveYears(),
+        getKasbStandards({ effectiveYear: selectedYear }),
+      ])
+      setYears(yrs)
+      setStandards(stds)
+    } finally {
+      setLoading(false)
+    }
+  }, [selectedYear])
+
+  useEffect(() => { loadData() }, [loadData])
+
+  if (selectedStdId) {
+    return <KasbStandardDetail standardId={selectedStdId} onBack={() => setSelectedStdId(null)} />
+  }
+
+  return (
+    <>
+      <KasbCrawlPanel onComplete={loadData} />
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <h2 style={{ fontSize: 18, fontWeight: 700, color: '#1a5c2e' }}>K-IFRS 제·개정 현황</h2>
+        <span style={{ fontSize: 13, color: '#8a9ab0' }}>총 {standards.length}건</span>
+      </div>
+      <div style={{ marginBottom: 8 }}>
+        <YearSelectorLabeled
+          label="시행연도"
+          years={years}
+          selected={selectedYear}
+          onChange={y => setSelectedYear(y)}
+        />
+      </div>
+      {loading ? <LoadingBox /> : standards.length === 0 ? (
+        <EmptyState message='위의 "수집 시작" 버튼을 눌러 KASB 기준서 제·개정 현황을 수집해주세요.' />
+      ) : (
+        <div style={{ display: 'grid', gap: 16, marginTop: 20 }}>
+          {standards.map(s => (
+            <KasbStandardCard key={s.id} standard={s} onClick={() => setSelectedStdId(s.id)} />
+          ))}
+        </div>
+      )}
+    </>
+  )
+}
+
+function YearSelectorLabeled({ label, years, selected, onChange }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>
+      <span style={{ fontSize: 12, color: '#8a9ab0', fontWeight: 600 }}>{label}:</span>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        <button
+          onClick={() => onChange(null)}
+          style={yearBtnStyle(!selected)}
+        >
+          전체
+        </button>
+        {years.map(y => (
+          <button
+            key={y}
+            onClick={() => onChange(y)}
+            style={yearBtnStyle(selected === y)}
+          >
+            {y}년
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function yearBtnStyle(active) {
+  return {
+    padding: '5px 14px',
+    borderRadius: 20,
+    border: active ? '2px solid #1a5c2e' : '1px solid #dde2ea',
+    background: active ? '#1a5c2e' : '#fff',
+    color: active ? '#fff' : '#555',
+    fontSize: 13,
+    fontWeight: active ? 700 : 400,
+    cursor: 'pointer',
+    transition: 'all 0.15s',
+  }
 }
 
 /* ── ESMA 뷰 ─────────────────────────────────────────── */
