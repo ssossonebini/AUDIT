@@ -16,3 +16,6 @@ export const getFssCaseCrawlStatus = () => api.get('/crawl/status').then(r => r.
 
 export const summarizeFssCase = (id) =>
   api.post(`/cases/${id}/summarize`).then(r => r.data)
+
+export const resetFssCases = () =>
+  api.delete('/cases').then(r => r.data)

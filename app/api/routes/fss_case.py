@@ -76,10 +76,14 @@ def summarize_case(case_id: int, db: Session = Depends(get_db)):
                     time.sleep(0.5)
 
             if not raw_text:
-                raise HTTPException(
-                    status_code=404,
-                    detail="PDF 파일을 찾을 수 없습니다. 원문 보기에서 직접 확인해주세요."
+                # 현재 데이터가 가짜 nttId를 가진 시드 데이터일 수 있음
+                # 사용자에게 재수집 안내
+                hint = (
+                    "PDF를 찾을 수 없습니다. "
+                    "수집 패널의 [초기화 후 재수집] 버튼을 눌러 금감원 사이트에서 실제 데이터를 재수집해주세요. "
+                    f"또는 원문 보기 링크에서 직접 확인하세요: {case.url or 'URL 없음'}"
                 )
+                raise HTTPException(status_code=404, detail=hint)
             case.raw_text = raw_text[:50000]
             db.commit()
         except HTTPException:
@@ -171,6 +175,15 @@ def _parse_case_summary(text: str) -> dict:
         "cases": cases,
         "implications": implications,
     }
+
+
+@router.delete("/cases")
+def reset_cases(db: Session = Depends(get_db)):
+    """기존 지적사례 데이터 전체 삭제 (재수집 전 초기화용)"""
+    count = db.query(FssCaseReport).count()
+    db.query(FssCaseReport).delete()
+    db.commit()
+    return {"deleted": count, "message": f"{count}건 삭제 완료. 수집 시작 버튼으로 재수집하세요."}
 
 
 @router.post("/crawl", response_model=FssCaseCrawlStatus)

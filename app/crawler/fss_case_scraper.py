@@ -143,7 +143,6 @@ def fetch_case_list(max_pages: int = 5) -> list[dict]:
         if not rows:
             break
 
-        page_cases = []
         for row in rows:
             cols = row.select("td")
             if len(cols) < 3:
@@ -154,8 +153,7 @@ def fetch_case_list(max_pages: int = 5) -> list[dict]:
                 continue
 
             title = title_td.get_text(strip=True)
-            # 지적사례 관련 게시글 필터링
-            if not _is_case_article(title):
+            if not title:
                 continue
 
             href = title_td.get("href", "")
@@ -177,7 +175,7 @@ def fetch_case_list(max_pages: int = 5) -> list[dict]:
             year = _extract_year(title, pub_date)
             period = _extract_period(title, pub_date)
 
-            page_cases.append({
+            cases.append({
                 "ntt_id": ntt_id,
                 "title": title,
                 "pub_date": pub_date,
@@ -186,14 +184,10 @@ def fetch_case_list(max_pages: int = 5) -> list[dict]:
                 "url": DETAIL_URL.format(ntt_id=ntt_id),
             })
 
-        if not page_cases:
-            break
-
-        cases.extend(page_cases)
         time.sleep(1)
 
     if not cases:
-        logger.warning("라이브 크롤링 실패 또는 결과 없음. 시드 데이터 사용.")
+        logger.warning("라이브 크롤링 결과 없음. 시드 데이터 사용.")
         return SEED_CASES
 
     return cases
