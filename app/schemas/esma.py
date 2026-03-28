@@ -3,28 +3,28 @@ from typing import Optional
 from datetime import datetime
 
 
-class SecSpeechListItem(BaseModel):
+class EsmaReportListItem(BaseModel):
     id: int
-    speech_id: str
+    report_id: str
     title: str
     pub_date: Optional[str] = None
     year: Optional[int] = None
     url: str
-    speaker: Optional[str] = None
+    pdf_url: Optional[str] = None
     category: Optional[str] = None
     summary: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
 
-class SecSpeechSchema(BaseModel):
+class EsmaReportSchema(BaseModel):
     id: int
-    speech_id: str
+    report_id: str
     title: str
     pub_date: Optional[str] = None
     year: Optional[int] = None
     url: str
-    speaker: Optional[str] = None
+    pdf_url: Optional[str] = None
     category: Optional[str] = None
     summary: Optional[str] = None
     created_at: datetime
@@ -32,7 +32,7 @@ class SecSpeechSchema(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class SecCrawlStatus(BaseModel):
+class EsmaCrawlStatus(BaseModel):
     status: str
     message: str
     total: int = 0

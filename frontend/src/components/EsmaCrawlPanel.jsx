@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
-import { startSecCrawl, getSecCrawlStatus } from '../api/sec'
+import { startEsmaCrawl, getEsmaCrawlStatus } from '../api/esma'
 
-export default function SecCrawlPanel({ onComplete }) {
+export default function EsmaCrawlPanel({ onComplete }) {
   const [status, setStatus] = useState(null)
   const [loading, setLoading] = useState(false)
   const [items, setItems] = useState(20)
@@ -9,7 +9,7 @@ export default function SecCrawlPanel({ onComplete }) {
 
   const poll = () => {
     pollRef.current = setInterval(async () => {
-      const s = await getSecCrawlStatus()
+      const s = await getEsmaCrawlStatus()
       setStatus(s)
       if (s.status !== 'running') {
         clearInterval(pollRef.current)
@@ -21,7 +21,7 @@ export default function SecCrawlPanel({ onComplete }) {
 
   const handleStart = async () => {
     setLoading(true)
-    const s = await startSecCrawl(items)
+    const s = await startEsmaCrawl(items)
     setStatus(s)
     if (s.status === 'started' || s.status === 'running') poll()
     else setLoading(false)
@@ -39,13 +39,12 @@ export default function SecCrawlPanel({ onComplete }) {
       padding: '20px 24px',
       marginBottom: 24,
     }}>
-      <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 8, color: '#7b2d00' }}>
-        🔄 SEC 연설문 수집
+      <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 8, color: '#003399' }}>
+        🔄 ESMA ECEP 보고서 수집
       </div>
       <div style={{ fontSize: 13, color: '#666', marginBottom: 12, lineHeight: 1.6 }}>
-        SEC 홈페이지에서 회계·감사 관련 연설문(AICPA 컨퍼런스 등)을 수집합니다.
-        페이지 접근이 제한된 경우 사전 등록된 주요 연설문 목록을 자동으로 사용하며,
-        수집 시 각 연설문의 본문 텍스트를 자동으로 추출합니다.
+        ESMA 홈페이지에서 European Common Enforcement Priorities(ECEP) 보고서를 수집합니다.
+        접근 제한 시 사전 등록된 2019~2025년 ECEP PDF 목록을 자동으로 사용합니다.
       </div>
       <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
         <label style={{ fontSize: 13, color: '#555' }}>
@@ -64,7 +63,7 @@ export default function SecCrawlPanel({ onComplete }) {
           disabled={isRunning}
           style={{
             padding: '8px 20px',
-            background: isRunning ? '#8a9ab0' : '#7b2d00',
+            background: isRunning ? '#8a9ab0' : '#003399',
             color: '#fff',
             border: 'none',
             borderRadius: 8,
@@ -84,10 +83,10 @@ export default function SecCrawlPanel({ onComplete }) {
           </div>
           {status.total > 0 && (
             <div>
-              <div style={{ background: '#fef3ee', borderRadius: 8, height: 8, overflow: 'hidden', marginBottom: 4 }}>
+              <div style={{ background: '#e8ecf8', borderRadius: 8, height: 8, overflow: 'hidden', marginBottom: 4 }}>
                 <div style={{
                   width: `${Math.round((status.processed / status.total) * 100)}%`,
-                  background: '#7b2d00',
+                  background: '#003399',
                   height: '100%',
                   transition: 'width 0.4s',
                 }} />
@@ -102,11 +101,7 @@ export default function SecCrawlPanel({ onComplete }) {
 }
 
 function StatusBadge({ status }) {
-  const map = {
-    running: ['#f59e0b', '처리 중'],
-    started: ['#3b82f6', '시작됨'],
-    idle: ['#10b981', '완료'],
-  }
+  const map = { running: ['#f59e0b', '처리 중'], started: ['#3b82f6', '시작됨'], idle: ['#10b981', '완료'] }
   const [color, label] = map[status] || ['#8a9ab0', status]
   return (
     <span style={{ background: color, color: '#fff', borderRadius: 10, padding: '2px 10px', fontSize: 11, fontWeight: 700 }}>

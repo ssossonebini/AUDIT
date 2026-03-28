@@ -7,15 +7,15 @@ import CrawlPanel from './components/CrawlPanel'
 import PcaobCrawlPanel from './components/PcaobCrawlPanel'
 import PcaobPublicationCard from './components/PcaobPublicationCard'
 import PcaobPublicationDetail from './components/PcaobPublicationDetail'
-import SecCrawlPanel from './components/SecCrawlPanel'
-import SecSpeechCard from './components/SecSpeechCard'
-import SecSpeechDetail from './components/SecSpeechDetail'
+import EsmaCrawlPanel from './components/EsmaCrawlPanel'
+import EsmaReportCard from './components/EsmaReportCard'
+import EsmaReportDetail from './components/EsmaReportDetail'
 import { getYears, getArticles } from './api/fss'
 import { getPcaobYears, getPcaobPublications } from './api/pcaob'
-import { getSecYears, getSecSpeeches } from './api/sec'
+import { getEsmaYears, getEsmaReports } from './api/esma'
 
 function App() {
-  const [activeTab, setActiveTab] = useState('fss') // 'fss' | 'pcaob' | 'sec'
+  const [activeTab, setActiveTab] = useState('fss') // 'fss' | 'pcaob' | 'esma'
 
   return (
     <div style={{ minHeight: '100vh', background: '#f4f6f9' }}>
@@ -23,7 +23,7 @@ function App() {
       <main style={{ maxWidth: 1000, margin: '0 auto', padding: '32px 20px' }}>
         {activeTab === 'fss' && <FssView />}
         {activeTab === 'pcaob' && <PcaobView />}
-        {activeTab === 'sec' && <SecView />}
+        {activeTab === 'esma' && <EsmaView />}
       </main>
     </div>
   )
@@ -130,21 +130,21 @@ function PcaobView() {
   )
 }
 
-/* ── SEC 뷰 ─────────────────────────────────────────── */
+/* ── ESMA 뷰 ─────────────────────────────────────────── */
 
-function SecView() {
+function EsmaView() {
   const [years, setYears] = useState([])
   const [selectedYear, setSelectedYear] = useState(null)
-  const [speeches, setSpeeches] = useState([])
-  const [selectedSpeechId, setSelectedSpeechId] = useState(null)
+  const [reports, setReports] = useState([])
+  const [selectedReportId, setSelectedReportId] = useState(null)
   const [loading, setLoading] = useState(false)
 
   const loadData = useCallback(async () => {
     setLoading(true)
     try {
-      const [yrs, spcs] = await Promise.all([getSecYears(), getSecSpeeches(selectedYear)])
+      const [yrs, rpts] = await Promise.all([getEsmaYears(), getEsmaReports(selectedYear)])
       setYears(yrs)
-      setSpeeches(spcs)
+      setReports(rpts)
     } finally {
       setLoading(false)
     }
@@ -152,28 +152,28 @@ function SecView() {
 
   useEffect(() => { loadData() }, [loadData])
 
-  if (selectedSpeechId) {
+  if (selectedReportId) {
     return (
-      <SecSpeechDetail speechId={selectedSpeechId} onBack={() => setSelectedSpeechId(null)} />
+      <EsmaReportDetail reportId={selectedReportId} onBack={() => setSelectedReportId(null)} />
     )
   }
 
   return (
     <>
-      <SecCrawlPanel onComplete={loadData} />
+      <EsmaCrawlPanel onComplete={loadData} />
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h2 style={{ fontSize: 18, fontWeight: 700, color: '#7b2d00' }}>
-          SEC OCA 회계·감사 연설문
+        <h2 style={{ fontSize: 18, fontWeight: 700, color: '#003399' }}>
+          ESMA ECEP 보고서
         </h2>
-        <span style={{ fontSize: 13, color: '#8a9ab0' }}>총 {speeches.length}건</span>
+        <span style={{ fontSize: 13, color: '#8a9ab0' }}>총 {reports.length}건</span>
       </div>
       <YearSelector years={years} selected={selectedYear} onChange={y => setSelectedYear(y)} />
-      {loading ? <LoadingBox /> : speeches.length === 0 ? (
-        <EmptyState message='위의 "수집 시작" 버튼을 눌러 SEC 연설문을 수집해주세요.' />
+      {loading ? <LoadingBox /> : reports.length === 0 ? (
+        <EmptyState message='위의 "수집 시작" 버튼을 눌러 ESMA ECEP 보고서를 수집해주세요.' />
       ) : (
         <div style={{ display: 'grid', gap: 16, marginTop: 20 }}>
-          {speeches.map(s => (
-            <SecSpeechCard key={s.id} speech={s} onClick={() => setSelectedSpeechId(s.id)} />
+          {reports.map(r => (
+            <EsmaReportCard key={r.id} report={r} onClick={() => setSelectedReportId(r.id)} />
           ))}
         </div>
       )}

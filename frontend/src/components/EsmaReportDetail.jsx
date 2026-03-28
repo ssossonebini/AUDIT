@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
-import { getSecSpeech, summarizeSecSpeech } from '../api/sec'
+import { getEsmaReport, summarizeEsmaReport } from '../api/esma'
 import SummaryRenderer from './SummaryRenderer'
 
-export default function SecSpeechDetail({ speechId, onBack }) {
-  const [speech, setSpeech] = useState(null)
+export default function EsmaReportDetail({ reportId, onBack }) {
+  const [report, setReport] = useState(null)
   const [loading, setLoading] = useState(true)
   const [aiSummary, setAiSummary] = useState(null)
   const [aiStructured, setAiStructured] = useState(null)
@@ -15,10 +15,10 @@ export default function SecSpeechDetail({ speechId, onBack }) {
     setAiSummary(null)
     setAiStructured(null)
     setSummarizeError(null)
-    getSecSpeech(speechId)
-      .then(setSpeech)
+    getEsmaReport(reportId)
+      .then(setReport)
       .finally(() => setLoading(false))
-  }, [speechId])
+  }, [reportId])
 
   const handleSummarize = async () => {
     setSummarizing(true)
@@ -26,7 +26,7 @@ export default function SecSpeechDetail({ speechId, onBack }) {
     setAiSummary(null)
     setAiStructured(null)
     try {
-      const result = await summarizeSecSpeech(speechId)
+      const result = await summarizeEsmaReport(reportId)
       setAiSummary(result.summary)
       setAiStructured(result.structured ?? null)
     } catch (e) {
@@ -38,53 +38,50 @@ export default function SecSpeechDetail({ speechId, onBack }) {
   }
 
   if (loading) return <div style={centerStyle}>Loading...</div>
-  if (!speech) return <div style={centerStyle}>Speech not found.</div>
+  if (!report) return <div style={centerStyle}>Report not found.</div>
 
-  const accentColor = '#7b2d00'
+  const accent = '#003399'
 
   return (
     <div style={{ maxWidth: 860, margin: '0 auto', padding: '24px 0' }}>
-      <button onClick={onBack} style={{ ...backBtnStyle, color: accentColor, borderColor: '#dde2ea' }}>
-        ← 목록으로
-      </button>
+      <button onClick={onBack} style={{ ...backBtnStyle, color: accent }}>← 목록으로</button>
 
       <div style={{ background: '#fff', borderRadius: 12, border: '1px solid #dde2ea', padding: '32px 36px', marginTop: 16 }}>
-        {/* 태그 영역 */}
         <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
-          {speech.year && (
-            <span style={{ ...tagStyle, background: '#fef3ee', color: accentColor }}>{speech.year}</span>
+          {report.year && (
+            <span style={{ ...tagStyle, background: '#e8ecf8', color: accent }}>{report.year}</span>
           )}
-          {speech.category && (
-            <span style={{ ...tagStyle, background: '#fff7ed', color: '#92400e' }}>{speech.category}</span>
+          {report.category && (
+            <span style={{ ...tagStyle, background: '#f0f2fc', color: '#1a3a9c' }}>{report.category}</span>
           )}
         </div>
 
         <h1 style={{ fontSize: 22, fontWeight: 700, margin: '0 0 12px', lineHeight: 1.4, color: '#111' }}>
-          {speech.title}
+          {report.title}
         </h1>
 
         <div style={{ display: 'flex', gap: 16, fontSize: 13, color: '#8a9ab0', marginBottom: 28, flexWrap: 'wrap' }}>
-          {speech.pub_date && <span>📅 {speech.pub_date}</span>}
-          {speech.speaker && <span>🎤 {speech.speaker}</span>}
-          {speech.url && (
-            <a href={speech.url} target="_blank" rel="noreferrer" style={{ color: accentColor, fontWeight: 600 }}>
-              🔗 원문 보기 (SEC.gov)
+          {report.pub_date && <span>📅 {report.pub_date}</span>}
+          {report.url && (
+            <a href={report.url} target="_blank" rel="noreferrer" style={{ color: accent }}>
+              🔗 View Source (ESMA)
+            </a>
+          )}
+          {report.pdf_url && (
+            <a href={report.pdf_url} target="_blank" rel="noreferrer" style={{ color: accent, fontWeight: 600 }}>
+              📄 Download PDF
             </a>
           )}
         </div>
 
-        {/* AI 요약 버튼 */}
         <div style={{ marginBottom: 28 }}>
           <button
             onClick={handleSummarize}
             disabled={summarizing}
-            style={summarizeBtnStyle(summarizing, accentColor)}
+            style={summarizeBtnStyle(summarizing, accent)}
           >
-            {summarizing ? '⏳ AI 요약 중...' : '✨ AI로 연설문 요약하기'}
+            {summarizing ? '⏳ AI 요약 중...' : '✨ AI로 PDF 요약하기'}
           </button>
-          <div style={{ fontSize: 12, color: '#8a9ab0', marginTop: 6 }}>
-            * 수집 시 본문이 자동 추출됩니다. 요약 버튼 클릭 시 Claude AI가 분석합니다.
-          </div>
 
           {summarizeError && (
             <div style={{ marginTop: 12, padding: '12px 16px', background: '#fff5f5', border: '1px solid #fcc', borderRadius: 8, color: '#c00', fontSize: 13 }}>
@@ -93,8 +90,8 @@ export default function SecSpeechDetail({ speechId, onBack }) {
           )}
 
           {aiSummary && (
-            <div style={{ marginTop: 16, padding: '20px 24px', background: '#fff9f5', border: `1px solid ${accentColor}44`, borderRadius: 10 }}>
-              <div style={{ fontWeight: 700, fontSize: 15, color: accentColor, marginBottom: 16 }}>
+            <div style={{ marginTop: 16, padding: '20px 24px', background: '#f0f2fc', border: `1px solid ${accent}44`, borderRadius: 10 }}>
+              <div style={{ fontWeight: 700, fontSize: 15, color: accent, marginBottom: 16 }}>
                 ✨ AI 요약 결과
               </div>
               <SummaryRenderer text={aiSummary} structured={aiStructured} />
@@ -102,20 +99,20 @@ export default function SecSpeechDetail({ speechId, onBack }) {
           )}
         </div>
 
-        {speech.summary && (
+        {report.summary && (
           <div>
-            <h2 style={{ fontSize: 16, fontWeight: 700, color: accentColor, marginBottom: 12, paddingBottom: 8, borderBottom: `2px solid #fef3ee` }}>
+            <h2 style={{ fontSize: 16, fontWeight: 700, color: accent, marginBottom: 12, paddingBottom: 8, borderBottom: '2px solid #e8ecf8' }}>
               📄 요약
             </h2>
             <div style={{ fontSize: 14, color: '#333', lineHeight: 1.8, whiteSpace: 'pre-line' }}>
-              {speech.summary}
+              {report.summary}
             </div>
           </div>
         )}
 
-        {!speech.summary && (
+        {!report.summary && (
           <div style={{ color: '#8a9ab0', fontSize: 14, padding: '20px 0' }}>
-            위의 버튼을 눌러 AI 요약을 실행하거나, 원문을 직접 확인하세요.
+            위의 버튼을 눌러 AI 요약을 실행하거나, PDF를 직접 다운로드하여 확인하세요.
           </div>
         )}
       </div>
@@ -125,29 +122,16 @@ export default function SecSpeechDetail({ speechId, onBack }) {
 
 const centerStyle = { textAlign: 'center', padding: 60, color: '#8a9ab0' }
 const backBtnStyle = {
-  background: 'none',
-  border: '1px solid #dde2ea',
-  borderRadius: 8,
-  padding: '8px 16px',
-  cursor: 'pointer',
-  fontSize: 14,
-  fontWeight: 600,
+  background: 'none', border: '1px solid #dde2ea', borderRadius: 8,
+  padding: '8px 16px', cursor: 'pointer', fontSize: 14, fontWeight: 600,
 }
 const tagStyle = {
-  display: 'inline-block',
-  fontSize: 12,
-  fontWeight: 700,
-  padding: '3px 12px',
-  borderRadius: 12,
+  display: 'inline-block', fontSize: 12, fontWeight: 700,
+  padding: '3px 12px', borderRadius: 12,
 }
 const summarizeBtnStyle = (disabled, color) => ({
   background: disabled ? '#8a9ab0' : color,
-  color: '#fff',
-  border: 'none',
-  borderRadius: 8,
-  padding: '10px 20px',
-  fontSize: 14,
-  fontWeight: 700,
-  cursor: disabled ? 'not-allowed' : 'pointer',
-  transition: 'background 0.2s',
+  color: '#fff', border: 'none', borderRadius: 8,
+  padding: '10px 20px', fontSize: 14, fontWeight: 700,
+  cursor: disabled ? 'not-allowed' : 'pointer', transition: 'background 0.2s',
 })

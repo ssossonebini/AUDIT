@@ -37,10 +37,10 @@ export default function Header({ activeTab, onTabChange }) {
           subLabel="Staff Publications"
         />
         <TabButton
-          active={activeTab === 'sec'}
-          onClick={() => onTabChange?.('sec')}
-          label="🇺🇸 SEC"
-          subLabel="OCA 연설문"
+          active={activeTab === 'esma'}
+          onClick={() => onTabChange?.('esma')}
+          label="🇪🇺 ESMA"
+          subLabel="ECEP 보고서"
         />
       </div>
     </header>
