@@ -10,18 +10,23 @@ import PcaobPublicationDetail from './components/PcaobPublicationDetail'
 import EsmaCrawlPanel from './components/EsmaCrawlPanel'
 import EsmaReportCard from './components/EsmaReportCard'
 import EsmaReportDetail from './components/EsmaReportDetail'
+import FssCaseCrawlPanel from './components/FssCaseCrawlPanel'
+import FssCaseCard from './components/FssCaseCard'
+import FssCaseDetail from './components/FssCaseDetail'
 import { getYears, getArticles } from './api/fss'
 import { getPcaobYears, getPcaobPublications } from './api/pcaob'
 import { getEsmaYears, getEsmaReports } from './api/esma'
+import { getFssCaseYears, getFssCases } from './api/fssCase'
 
 function App() {
-  const [activeTab, setActiveTab] = useState('fss') // 'fss' | 'pcaob' | 'esma'
+  const [activeTab, setActiveTab] = useState('fss') // 'fss' | 'fss-case' | 'pcaob' | 'esma'
 
   return (
     <div style={{ minHeight: '100vh', background: '#f4f6f9' }}>
       <Header activeTab={activeTab} onTabChange={setActiveTab} />
       <main style={{ maxWidth: 1000, margin: '0 auto', padding: '32px 20px' }}>
         {activeTab === 'fss' && <FssView />}
+        {activeTab === 'fss-case' && <FssCaseView />}
         {activeTab === 'pcaob' && <PcaobView />}
         {activeTab === 'esma' && <EsmaView />}
       </main>
@@ -123,6 +128,55 @@ function PcaobView() {
         <div style={{ display: 'grid', gap: 16, marginTop: 20 }}>
           {publications.map(p => (
             <PcaobPublicationCard key={p.id} publication={p} onClick={() => setSelectedPubId(p.id)} />
+          ))}
+        </div>
+      )}
+    </>
+  )
+}
+
+/* ── 금감원 지적사례 뷰 ──────────────────────────────── */
+
+function FssCaseView() {
+  const [years, setYears] = useState([])
+  const [selectedYear, setSelectedYear] = useState(null)
+  const [cases, setCases] = useState([])
+  const [selectedCaseId, setSelectedCaseId] = useState(null)
+  const [loading, setLoading] = useState(false)
+
+  const loadData = useCallback(async () => {
+    setLoading(true)
+    try {
+      const [yrs, cs] = await Promise.all([getFssCaseYears(), getFssCases(selectedYear)])
+      setYears(yrs)
+      setCases(cs)
+    } finally {
+      setLoading(false)
+    }
+  }, [selectedYear])
+
+  useEffect(() => { loadData() }, [loadData])
+
+  if (selectedCaseId) {
+    return (
+      <FssCaseDetail caseId={selectedCaseId} onBack={() => setSelectedCaseId(null)} />
+    )
+  }
+
+  return (
+    <>
+      <FssCaseCrawlPanel onComplete={loadData} />
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <h2 style={{ fontSize: 18, fontWeight: 700, color: '#8b1a1a' }}>회계심사·감리 지적사례</h2>
+        <span style={{ fontSize: 13, color: '#8a9ab0' }}>총 {cases.length}건</span>
+      </div>
+      <YearSelector years={years} selected={selectedYear} onChange={y => setSelectedYear(y)} />
+      {loading ? <LoadingBox /> : cases.length === 0 ? (
+        <EmptyState message='위의 "수집 시작" 버튼을 눌러 금감원 지적사례를 수집해주세요.' />
+      ) : (
+        <div style={{ display: 'grid', gap: 16, marginTop: 20 }}>
+          {cases.map(c => (
+            <FssCaseCard key={c.id} report={c} onClick={() => setSelectedCaseId(c.id)} />
           ))}
         </div>
       )}

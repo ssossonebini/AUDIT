@@ -70,3 +70,20 @@ class EsmaReport(Base):
     raw_text = Column(Text)                              # PDF 전체 텍스트
     summary = Column(Text)                               # 요약 텍스트
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class FssCaseReport(Base):
+    """금융감독원 회계심사·감리 지적사례 보도자료"""
+    __tablename__ = "fss_case_reports"
+
+    id = Column(Integer, primary_key=True, index=True)
+    ntt_id = Column(String, unique=True, index=True)    # 게시글 고유 ID
+    title = Column(String, nullable=False)
+    pub_date = Column(String)                           # 게시일 (예: 2025-12-02)
+    year = Column(Integer, index=True)                  # 연도
+    period = Column(String)                             # 해당 지적사례 기간 (예: 2025년 상반기)
+    url = Column(String)                                # 원문 URL
+    pdf_path = Column(String)                           # 로컬 저장 PDF 경로
+    raw_text = Column(Text)                             # PDF 전체 텍스트
+    summary = Column(Text)                              # 요약 텍스트
+    created_at = Column(DateTime, default=datetime.utcnow)

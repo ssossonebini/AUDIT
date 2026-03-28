@@ -31,6 +31,12 @@ export default function Header({ activeTab, onTabChange }) {
           subLabel="중점심사 회계이슈"
         />
         <TabButton
+          active={activeTab === 'fss-case'}
+          onClick={() => onTabChange?.('fss-case')}
+          label="🇰🇷 금감원 지적사례"
+          subLabel="회계심사·감리"
+        />
+        <TabButton
           active={activeTab === 'pcaob'}
           onClick={() => onTabChange?.('pcaob')}
           label="🇺🇸 PCAOB"
