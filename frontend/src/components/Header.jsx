@@ -54,6 +54,12 @@ export default function Header({ activeTab, onTabChange }) {
           label="🇪🇺 ESMA"
           subLabel="ECEP 보고서"
         />
+        <TabButton
+          active={activeTab === 'audit-news'}
+          onClick={() => onTabChange?.('audit-news')}
+          label="📰 감사 보도자료"
+          subLabel="FSS·FSC AI 분류"
+        />
       </div>
     </header>
   )

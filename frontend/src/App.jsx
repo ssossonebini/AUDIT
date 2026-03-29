@@ -16,14 +16,18 @@ import FssCaseDetail from './components/FssCaseDetail'
 import KasbCrawlPanel from './components/KasbCrawlPanel'
 import KasbStandardCard from './components/KasbStandardCard'
 import KasbStandardDetail from './components/KasbStandardDetail'
+import AuditNewsCrawlPanel from './components/AuditNewsCrawlPanel'
+import AuditNewsCard from './components/AuditNewsCard'
+import AuditNewsDetail from './components/AuditNewsDetail'
 import { getYears, getArticles } from './api/fss'
 import { getPcaobYears, getPcaobPublications } from './api/pcaob'
 import { getEsmaYears, getEsmaReports } from './api/esma'
 import { getFssCaseYears, getFssCases } from './api/fssCase'
 import { getKasbEffectiveYears, getKasbStandards } from './api/kasb'
+import { getAuditNewsYears, getAuditNews } from './api/auditNews'
 
 function App() {
-  const [activeTab, setActiveTab] = useState('fss') // 'fss' | 'fss-case' | 'kasb' | 'pcaob' | 'esma'
+  const [activeTab, setActiveTab] = useState('fss') // 'fss' | 'fss-case' | 'kasb' | 'pcaob' | 'esma' | 'audit-news'
 
   return (
     <div style={{ minHeight: '100vh', background: '#f4f6f9' }}>
@@ -34,6 +38,7 @@ function App() {
         {activeTab === 'kasb' && <KasbView />}
         {activeTab === 'pcaob' && <PcaobView />}
         {activeTab === 'esma' && <EsmaView />}
+        {activeTab === 'audit-news' && <AuditNewsView />}
       </main>
     </div>
   )
@@ -329,6 +334,80 @@ function EsmaView() {
         <div style={{ display: 'grid', gap: 16, marginTop: 20 }}>
           {reports.map(r => (
             <EsmaReportCard key={r.id} report={r} onClick={() => setSelectedReportId(r.id)} />
+          ))}
+        </div>
+      )}
+    </>
+  )
+}
+
+/* ── 감사 보도자료 뷰 ──────────────────────────────── */
+
+function AuditNewsView() {
+  const [years, setYears]               = useState([])
+  const [selectedYear, setSelectedYear] = useState(null)
+  const [source, setSource]             = useState(null)  // null | 'FSS' | 'FSC'
+  const [items, setItems]               = useState([])
+  const [selectedId, setSelectedId]     = useState(null)
+  const [loading, setLoading]           = useState(false)
+
+  const loadData = useCallback(async () => {
+    setLoading(true)
+    try {
+      const [yrs, news] = await Promise.all([
+        getAuditNewsYears(),
+        getAuditNews(selectedYear, source),
+      ])
+      setYears(yrs)
+      setItems(news)
+    } finally {
+      setLoading(false)
+    }
+  }, [selectedYear, source])
+
+  useEffect(() => { loadData() }, [loadData])
+
+  if (selectedId) {
+    return <AuditNewsDetail newsId={selectedId} onBack={() => setSelectedId(null)} />
+  }
+
+  return (
+    <>
+      <AuditNewsCrawlPanel onComplete={loadData} />
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <h2 style={{ fontSize: 18, fontWeight: 700, color: '#1a3a6c' }}>FSS·FSC 감사 관련 보도자료</h2>
+        <span style={{ fontSize: 13, color: '#8a9ab0' }}>총 {items.length}건</span>
+      </div>
+
+      {/* 출처 필터 */}
+      <div style={{ display: 'flex', gap: 6, marginTop: 12, marginBottom: 4 }}>
+        {[null, 'FSS', 'FSC'].map(s => (
+          <button
+            key={s ?? 'all'}
+            onClick={() => setSource(s)}
+            style={{
+              padding: '5px 14px',
+              borderRadius: 20,
+              border: source === s ? '2px solid #1a3a6c' : '1px solid #dde2ea',
+              background: source === s ? '#1a3a6c' : '#fff',
+              color: source === s ? '#fff' : '#555',
+              fontSize: 13,
+              fontWeight: source === s ? 700 : 400,
+              cursor: 'pointer',
+            }}
+          >
+            {s ?? '전체'}
+          </button>
+        ))}
+      </div>
+
+      <YearSelector years={years} selected={selectedYear} onChange={y => setSelectedYear(y)} />
+      {loading ? <LoadingBox /> : items.length === 0 ? (
+        <EmptyState message='위의 "수집 시작" 버튼을 눌러 보도자료를 수집해주세요.' />
+      ) : (
+        <div style={{ display: 'grid', gap: 16, marginTop: 20 }}>
+          {items.map(item => (
+            <AuditNewsCard key={item.id} item={item} onClick={() => setSelectedId(item.id)} />
           ))}
         </div>
       )}

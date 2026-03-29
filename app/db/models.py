@@ -96,6 +96,36 @@ class KasbStandard(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class AuditNewsReport(Base):
+    """FSS·FSC 보도자료 중 회계감사 관련 항목"""
+    __tablename__ = "audit_news_reports"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    source     = Column(String, index=True)          # "FSS" / "FSC"
+    ntt_id     = Column(String, unique=True, index=True)  # "FSS-1234567" / "FSC-85959"
+    title      = Column(String, nullable=False)
+    pub_date   = Column(String)                      # 게시일 (예: 2025-03-15)
+    year       = Column(Integer, index=True)         # 연도
+    department = Column(String)                      # 담당부서
+    url        = Column(String)                      # 원문 URL
+    ai_reason  = Column(Text)                        # AI 분류 이유
+    pdf_path   = Column(String)
+    raw_text   = Column(Text)
+    summary    = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class CrawlHistory(Base):
+    """증분 크롤링 이력 — 마지막 수집일 추적"""
+    __tablename__ = "crawl_history"
+
+    id               = Column(Integer, primary_key=True, index=True)
+    source           = Column(String, unique=True, index=True)  # "FSS_NEWS" / "FSC_NEWS"
+    last_crawled_at  = Column(DateTime)
+    last_sdate       = Column(String)   # 마지막 수집 기준 시작일 (다음 크롤 시 sdate로 사용)
+    total_new_items  = Column(Integer, default=0)
+
+
 class FssCaseReport(Base):
     """금융감독원 회계심사·감리 지적사례 보도자료"""
     __tablename__ = "fss_case_reports"
