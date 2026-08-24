@@ -88,19 +88,31 @@ def ingest_first(
     Returns:
         (pdf_path, raw_text) — 실패 시 (None, None)
     """
-    for att in prefer_pdf(attachments):
+    fallback_path = None
+
+    for i, att in enumerate(prefer_pdf(attachments)):
         url = att.get("url", "")
         if not url:
             continue
 
-        path, text = ingest(download_fn, url, uid, session)
+        # 첨부마다 저장 경로를 분리한다. download_pdf 는 {uid}.pdf 가 이미
+        # 있으면 내려받지 않고 그 경로를 돌려주므로, 모든 첨부가 같은 uid 를
+        # 쓰면 첫 첨부 파일이 계속 반환되어 나머지 첨부를 시도할 수 없다.
+        # (본문 없는 스캔본 PDF가 1순위로 걸렸을 때 실제로 문제가 된다)
+        slot = uid if i == 0 else f"{uid}_{i}"
+
+        path, text = ingest(download_fn, url, slot, session)
         if text:
             return path, text
+
+        # 유효한 PDF지만 텍스트가 없는 경우(스캔본) — 경로만이라도 남긴다
+        if path and fallback_path is None:
+            fallback_path = path
 
         if delay:
             time.sleep(delay)
 
-    return None, None
+    return fallback_path, None
 
 
 def prefer_pdf(attachments: Iterable[dict]) -> list[dict]:

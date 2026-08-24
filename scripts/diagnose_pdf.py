@@ -74,8 +74,10 @@ def check_detail_page(session, scraper, record) -> None:
     from bs4 import BeautifulSoup
     soup = BeautifulSoup(resp.text, "lxml")
 
+    # 본문 제목만 대조 대상이다. 사이트 공통 <title>("금융감독원")까지
+    # 후보에 넣으면 정상 게시물에서도 불일치로 오판한다.
     heading = ""
-    for sel in ("h1", "h2", "h3", ".bbsV_tit", ".board_view_title", "title"):
+    for sel in ("h1", "h2", "h3", ".bbsV_tit", ".board_view_title"):
         el = soup.select_one(sel)
         if el and el.get_text(strip=True):
             heading = el.get_text(strip=True)[:70]
@@ -83,10 +85,18 @@ def check_detail_page(session, scraper, record) -> None:
 
     stored = (record.title or "")[:70]
     print(f"  상세 페이지: HTTP {resp.status_code}, {len(resp.text):,} bytes")
-    print(f"    페이지 제목: {heading or '(찾지 못함)'}")
+
+    if not heading:
+        page_title = soup.select_one("title")
+        page_title = page_title.get_text(strip=True)[:40] if page_title else "?"
+        print(f"    본문 제목을 찾지 못함 (문서 <title>: {page_title})")
+        print("    → 제목 대조 생략. 첨부 조회 결과로 판단하세요.")
+        return
+
+    print(f"    페이지 제목: {heading}")
 
     core = stored[:14]
-    if core and heading and core not in heading:
+    if core and core not in heading:
         print("    ⚠️ 저장된 제목과 일치하지 않음 "
               "→ ntt_id 가 잘못됐거나 게시물이 내려갔을 가능성")
         print(f"       저장된 제목: {stored}")

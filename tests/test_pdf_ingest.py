@@ -109,3 +109,52 @@ def test_ingest_first_falls_back_when_first_attachment_is_not_pdf(tmp_path, monk
 
     assert text == "본문"
     assert len(calls) == 2, "첫 첨부가 HWP면 두 번째까지 시도해야 한다"
+
+
+def test_ingest_first_uses_distinct_paths_per_attachment(tmp_path, monkeypatch):
+    """download_pdf 의 exists() 캐시가 나머지 첨부를 가리면 안 된다.
+
+    1순위 첨부가 유효한 PDF지만 텍스트가 없는 스캔본이면 파일이 남는다.
+    모든 첨부가 같은 uid 를 쓰면 2순위 첨부를 요청해도 캐시된 같은 파일이
+    돌아와 영원히 같은 실패를 반복하게 된다.
+    """
+    uids = []
+
+    def fake_download(url, uid, session=None):
+        uids.append(uid)
+        p = tmp_path / f"{uid}.pdf"
+        if p.exists():                      # 실제 download_pdf 의 캐시 동작 재현
+            return str(p)
+        p.write_bytes(b"%PDF-1.7\n" + b"\x00" * 2048)
+        return str(p)
+
+    # 1순위는 텍스트가 없는 스캔본, 2순위에 본문이 있다
+    monkeypatch.setattr(
+        pdf_ingest.pdf_parser, "extract_text",
+        lambda p: "" if p.endswith("doc.pdf") else "본문",
+    )
+
+    attachments = [
+        {"name": "스캔본", "url": "https://x/FileDown.do?fileSn=0"},
+        {"name": "본문",   "url": "https://x/FileDown.do?fileSn=1"},
+    ]
+    path, text = pdf_ingest.ingest_first(attachments, fake_download, "doc", delay=0)
+
+    assert uids == ["doc", "doc_1"], "첨부마다 다른 저장 경로를 써야 한다"
+    assert text == "본문"
+
+
+def test_ingest_first_returns_scanned_pdf_path_as_fallback(tmp_path, monkeypatch):
+    """텍스트를 끝내 못 얻어도 받아둔 PDF 경로는 돌려준다."""
+    def fake_download(url, uid, session=None):
+        p = tmp_path / f"{uid}.pdf"
+        p.write_bytes(b"%PDF-1.7\n" + b"\x00" * 2048)
+        return str(p)
+
+    monkeypatch.setattr(pdf_ingest.pdf_parser, "extract_text", lambda p: "")
+
+    attachments = [{"name": "스캔본.pdf", "url": "https://x/a.pdf"}]
+    path, text = pdf_ingest.ingest_first(attachments, fake_download, "doc", delay=0)
+
+    assert text is None
+    assert path and path.endswith("doc.pdf")
