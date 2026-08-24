@@ -107,6 +107,19 @@ def _do_crawl(max_pages: int, db: Session):
 
             existing = db.query(FssCaseReport).filter(FssCaseReport.ntt_id == ntt_id).first()
             if existing:
+                # 본문이 비어 있으면 첨부 수집만 다시 시도한다 (자가 치유)
+                if not existing.raw_text:
+                    detail = fss_case_scraper.fetch_case_detail(ntt_id, session)
+                    pdf_path, raw_text = pdf_ingest.ingest_first(
+                        detail.get("attachments", []),
+                        fss_case_scraper.download_pdf,
+                        ntt_id,
+                        session,
+                    )
+                    if raw_text:
+                        existing.pdf_path, existing.raw_text = pdf_path, raw_text
+                        db.commit()
+                        logger.info(f"본문 재수집 성공: {ntt_id}")
                 _crawl_state["processed"] += 1
                 continue
 

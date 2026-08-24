@@ -116,8 +116,10 @@ def _do_crawl(max_pages: int, db: Session):
             _crawl_state["message"] = f"처리 중: {meta['title'][:30]}..."
 
             # 이미 DB에 있는 경우 건너뜀
+            # 본문(raw_text)이 이 프로젝트의 자산이므로 그것을 기준으로 재처리를 판단한다.
+            # 본문이 비어 있으면 첨부 수집을 다시 시도한다 (자가 치유).
             existing = db.query(FssArticle).filter(FssArticle.ntt_id == ntt_id).first()
-            if existing and existing.summary:
+            if existing and existing.raw_text:
                 _crawl_state["processed"] += 1
                 continue
 
@@ -152,19 +154,24 @@ def _do_crawl(max_pages: int, db: Session):
                 db.add(article)
                 db.flush()
 
-            article.pdf_path = pdf_path
-            article.raw_text = raw_text[:50000] if raw_text else None
-            article.summary = summary
+            # 재수집에 실패했다면 기존 레코드를 덮어쓰지 않는다.
+            # (덮어쓰면 이미 확보한 이슈까지 지워질 수 있다)
+            if raw_text or not existing:
+                article.pdf_path = pdf_path
+                article.raw_text = raw_text or None
+                article.summary = summary
 
-            # 기존 이슈 삭제 후 재등록
-            db.query(AuditIssue).filter(AuditIssue.article_id == article.id).delete()
-            for issue in issues_data:
-                db.add(AuditIssue(
-                    article_id=article.id,
-                    issue_number=issue["issue_number"],
-                    issue_title=issue["issue_title"],
-                    description=issue.get("description"),
-                ))
+                # 기존 이슈 삭제 후 재등록
+                db.query(AuditIssue).filter(AuditIssue.article_id == article.id).delete()
+                for issue in issues_data:
+                    db.add(AuditIssue(
+                        article_id=article.id,
+                        issue_number=issue["issue_number"],
+                        issue_title=issue["issue_title"],
+                        description=issue.get("description"),
+                    ))
+            else:
+                logger.warning(f"본문 재수집 실패 — 기존 데이터 유지: {ntt_id}")
 
             db.commit()
             _crawl_state["processed"] += 1

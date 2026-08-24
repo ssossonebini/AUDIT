@@ -176,6 +176,40 @@ def _ai_classify(title: str, api_key: str) -> dict:
         return {"relevant": True, "reason": "AI 분류 실패 — 수동 확인 필요"}
 
 
+def _refetch_missing(db: Session) -> int:
+    """본문(raw_text)이 비어 있는 기존 항목의 첨부 PDF를 다시 수집한다."""
+    pending = (
+        db.query(AuditNewsReport)
+        .filter((AuditNewsReport.raw_text.is_(None)) | (AuditNewsReport.raw_text == ""))
+        .all()
+    )
+    if not pending:
+        return 0
+
+    recovered = 0
+    for rec in pending:
+        _crawl_state["message"] = f"본문 재수집 중: {rec.title[:30]}..."
+        raw_id = rec.ntt_id.replace("FSS-", "").replace("FSC-", "")
+        try:
+            if rec.source == "FSS":
+                attachments = audit_news_scraper.fetch_fss_attachments(raw_id)
+            else:
+                attachments = audit_news_scraper.fetch_fsc_attachments(raw_id)
+
+            path, text = pdf_ingest.ingest_first(
+                attachments, audit_news_scraper.download_pdf, rec.ntt_id
+            )
+            if text:
+                rec.pdf_path, rec.raw_text = path, text
+                db.commit()
+                recovered += 1
+        except Exception as e:
+            logger.warning(f"본문 재수집 실패 ({rec.ntt_id}): {e}")
+
+    logger.info(f"본문 재수집: {len(pending)}건 중 {recovered}건 복구")
+    return recovered
+
+
 def _do_crawl(max_pages: int, db: Session):
     global _crawl_state
     _crawl_state = {
@@ -187,6 +221,12 @@ def _do_crawl(max_pages: int, db: Session):
     today  = date.today().isoformat()
 
     try:
+        # ── 본문이 비어 있는 기존 항목 재수집 (자가 치유) ────
+        # 증분 크롤링은 기존 ntt_id를 만나면 중단하므로, 이미 저장됐지만
+        # 첨부 수집에 실패한 항목은 여기서 따로 다시 시도한다. AI 분류는
+        # 이미 끝났으므로 재호출하지 않는다 (추가 비용 없음).
+        _refetch_missing(db)
+
         # ── 기존 ntt_id 목록 (증분 중단 판단용) ──────────────
         existing_ids = {
             r.ntt_id for r in db.query(AuditNewsReport.ntt_id).all()

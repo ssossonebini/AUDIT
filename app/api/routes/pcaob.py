@@ -101,6 +101,18 @@ def _do_crawl(max_items: int, db: Session):
 
             existing = db.query(PcaobPublication).filter(PcaobPublication.pub_id == pub_id).first()
             if existing:
+                # 본문이 비어 있으면 PDF 수집만 다시 시도한다 (자가 치유)
+                if not existing.raw_text and (existing.pdf_url or meta.get("pdf_url")):
+                    path, text = pdf_ingest.ingest(
+                        pcaob_scraper.download_pdf,
+                        existing.pdf_url or meta["pdf_url"],
+                        pub_id,
+                        pcaob_scraper._session(),
+                    )
+                    if text:
+                        existing.pdf_path, existing.raw_text = path, text
+                        db.commit()
+                        logger.info(f"본문 재수집 성공: {pub_id}")
                 _crawl_state["processed"] += 1
                 continue
 

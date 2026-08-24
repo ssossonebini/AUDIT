@@ -114,6 +114,18 @@ def _do_crawl(max_pages: int, db: Session):
 
             existing = db.query(KasbStandard).filter(KasbStandard.standard_id == sid).first()
             if existing:
+                # 본문이 비어 있으면 PDF 수집만 다시 시도한다 (자가 치유)
+                if not existing.raw_text and (existing.pdf_url or meta.get("pdf_url")):
+                    path, text = pdf_ingest.ingest(
+                        kasb_scraper.download_pdf,
+                        existing.pdf_url or meta["pdf_url"],
+                        sid,
+                        kasb_scraper._session(),
+                    )
+                    if text:
+                        existing.pdf_path, existing.raw_text = path, text
+                        db.commit()
+                        logger.info(f"본문 재수집 성공: {sid}")
                 _crawl_state["processed"] += 1
                 continue
 
