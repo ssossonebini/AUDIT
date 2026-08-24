@@ -54,6 +54,44 @@ def fetch_attachments(scraper, record, key: str):
     return scraper.fetch_fsc_attachments(raw)
 
 
+def check_detail_page(session, scraper, record) -> None:
+    """상세 페이지가 실제로 그 게시물인지 확인한다.
+
+    ntt_id 가 틀리면 FSS는 404 대신 목록/오류 페이지를 200으로 돌려주므로,
+    상태코드만으로는 알 수 없다. 저장된 제목과 페이지 제목을 대조한다.
+    """
+    url = getattr(record, "url", "") or ""
+    if not url:
+        print("  ⚠️ 저장된 url 이 없어 상세 페이지 검증을 건너뜀")
+        return
+
+    try:
+        resp = session.get(url, timeout=20)
+    except Exception as e:
+        print(f"  ❌ 상세 페이지 요청 실패: {type(e).__name__}: {e}")
+        return
+
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(resp.text, "lxml")
+
+    heading = ""
+    for sel in ("h1", "h2", "h3", ".bbsV_tit", ".board_view_title", "title"):
+        el = soup.select_one(sel)
+        if el and el.get_text(strip=True):
+            heading = el.get_text(strip=True)[:70]
+            break
+
+    stored = (record.title or "")[:70]
+    print(f"  상세 페이지: HTTP {resp.status_code}, {len(resp.text):,} bytes")
+    print(f"    페이지 제목: {heading or '(찾지 못함)'}")
+
+    core = stored[:14]
+    if core and heading and core not in heading:
+        print("    ⚠️ 저장된 제목과 일치하지 않음 "
+              "→ ntt_id 가 잘못됐거나 게시물이 내려갔을 가능성")
+        print(f"       저장된 제목: {stored}")
+
+
 def probe(session, url: str) -> str:
     """저장하지 않고 선두 바이트만 받아 형식을 판정한다."""
     try:
@@ -105,6 +143,8 @@ def main():
             key = getattr(rec, "ntt_id", None) or getattr(rec, "standard_id", "")
             print(f"\n▸ [{getattr(rec, 'year', '?')}] {rec.title[:56]}")
             print(f"  ntt_id={key}  url={getattr(rec, 'url', '')}")
+
+            check_detail_page(session, scraper, rec)
 
             try:
                 attachments = fetch_attachments(scraper, rec, key)
