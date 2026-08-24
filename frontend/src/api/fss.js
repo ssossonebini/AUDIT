@@ -14,5 +14,3 @@ export const startCrawl = (maxPages = 5) =>
 
 export const getCrawlStatus = () => api.get('/crawl/status').then(r => r.data)
 
-export const summarizeArticle = (id) =>
-  api.post(`/articles/${id}/summarize`).then(r => r.data)

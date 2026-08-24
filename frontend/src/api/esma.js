@@ -15,5 +15,3 @@ export const startEsmaCrawl = (maxItems = 20) =>
 
 export const getEsmaCrawlStatus = () => api.get('/crawl/status').then(r => r.data)
 
-export const summarizeEsmaReport = (id) =>
-  api.post(`/reports/${id}/summarize`).then(r => r.data)

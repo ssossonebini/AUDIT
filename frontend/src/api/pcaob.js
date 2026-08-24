@@ -20,5 +20,3 @@ export const startPcaobCrawl = (maxItems = 30) =>
 
 export const getPcaobCrawlStatus = () => api.get('/crawl/status').then(r => r.data)
 
-export const summarizePcaobPublication = (id) =>
-  api.post(`/publications/${id}/summarize`).then(r => r.data)

@@ -20,6 +20,7 @@ class AuditNewsListItem(BaseModel):
 
 class AuditNewsSchema(AuditNewsListItem):
     created_at: datetime
+    has_raw_text: bool = False
 
 
 class CrawlHistorySchema(BaseModel):

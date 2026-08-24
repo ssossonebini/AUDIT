@@ -20,6 +20,7 @@ class KasbStandardSchema(BaseModel):
     description: Optional[str] = None
     summary: Optional[str] = None
     created_at: datetime
+    has_raw_text: bool = False
 
     model_config = {"from_attributes": True}
 

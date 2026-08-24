@@ -22,6 +22,7 @@ from app.schemas.audit_news import (
     AuditNewsCrawlStatus, CrawlHistorySchema,
 )
 from app.crawler import audit_news_scraper, pdf_parser
+from app.crawler import pdf_ingest
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -76,110 +77,6 @@ def get_crawl_history(db: Session = Depends(get_db)):
 
 # ── AI 요약 ──────────────────────────────────────────────────
 
-@router.post("/news/{news_id}/summarize")
-def summarize_news(news_id: int, db: Session = Depends(get_db)):
-    if not settings.ANTHROPIC_API_KEY:
-        raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY가 설정되지 않았습니다.")
-
-    item = db.query(AuditNewsReport).filter(AuditNewsReport.id == news_id).first()
-    if not item:
-        raise HTTPException(status_code=404, detail="항목을 찾을 수 없습니다.")
-
-    if not item.raw_text:
-        # PDF 실시간 다운로드 시도
-        try:
-            source = item.source
-            raw_id = item.ntt_id.replace("FSS-", "").replace("FSC-", "")
-            attachments = []
-            if source == "FSS":
-                attachments = audit_news_scraper.fetch_fss_attachments(raw_id)
-            else:
-                attachments = audit_news_scraper.fetch_fsc_attachments(raw_id)
-
-            raw_text = ""
-            for att in attachments:
-                if ".pdf" in att["url"].lower() or "fileDown" in att["url"] or "atchFileId" in att["url"]:
-                    path = audit_news_scraper.download_pdf(att["url"], item.ntt_id)
-                    if path:
-                        raw_text = pdf_parser.extract_text(path)
-                        if raw_text:
-                            item.pdf_path = path
-                            break
-                    time.sleep(0.5)
-
-            if not raw_text:
-                raise HTTPException(
-                    status_code=404,
-                    detail="PDF를 찾을 수 없습니다. 원문 보기에서 직접 확인해주세요."
-                )
-            item.raw_text = raw_text[:50000]
-            db.commit()
-        except HTTPException:
-            raise
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"PDF 다운로드 오류: {e}")
-
-    client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
-    message = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=2048,
-        messages=[{
-            "role": "user",
-            "content": f"""다음은 {item.source}({"금융감독원" if item.source == "FSS" else "금융위원회"})의 보도자료입니다.
-회계감사·외부감사·감사보고서 관점에서 핵심 내용을 한국어로 요약해주세요.
-
-1. 전체 개요 (2-3문장)
-2. 회계감사에 영향을 주는 주요 변경·발표 사항 목록
-3. 감사인 및 기업 회계담당자 시사점
-
-제목: {item.title}
-내용:
-{item.raw_text[:30000]}""",
-        }],
-    )
-    raw = message.content[0].text.strip()
-    structured = _parse_summary(raw)
-    return {"summary": raw, "structured": structured}
-
-
-def _parse_summary(text: str) -> dict:
-    lines = text.splitlines()
-    overview_lines, changes, implications, section = [], [], [], None
-
-    for line in lines:
-        s = line.strip()
-        if re.search(r"전체\s*개요", s):
-            section = "overview"; continue
-        if re.search(r"변경|발표\s*사항|주요.*사항", s):
-            section = "changes"; continue
-        if re.search(r"시사점", s) and section != "implications":
-            section = "implications"; continue
-        if not s or re.match(r"^-{3,}|^#{1,4}\s", s):
-            continue
-
-        if section == "overview":
-            overview_lines.append(re.sub(r"\*\*([^*]+)\*\*", r"\1", s))
-        elif section == "changes":
-            m = re.match(r"^[①-⑩\-\*\d\.]+\s*\*?\*?([^*:：]+)\*?\*?[：:]\s*(.+)", s)
-            if m:
-                changes.append({
-                    "number": len(changes) + 1,
-                    "title": m.group(1).strip(),
-                    "description": re.sub(r"\*\*([^*]+)\*\*", r"\1", m.group(2).strip()),
-                })
-        elif section == "implications":
-            if s.startswith(("-", "•", "*")):
-                implications.append(re.sub(r"\*\*([^*]+)\*\*", r"\1",
-                                           re.sub(r"^[-•*]\s*", "", s)))
-
-    return {
-        "overview": " ".join(overview_lines[:4]),
-        "changes": changes,
-        "implications": implications,
-    }
-
-
-# ── 크롤링 ────────────────────────────────────────────────────
 
 @router.post("/crawl", response_model=AuditNewsCrawlStatus)
 def start_crawl(
@@ -333,6 +230,21 @@ def _do_crawl(max_pages: int, db: Session):
             else:
                 ai_reason = "AI 미설정 — 키워드 필터 통과 항목"
 
+            # 첨부 PDF 수집 (분류 통과 항목만)
+            _crawl_state["message"] = f"PDF 수집 중: {meta['title'][:35]}..."
+            raw_id = meta["ntt_id"].replace("FSS-", "").replace("FSC-", "")
+            try:
+                if meta["source"] == "FSS":
+                    attachments = audit_news_scraper.fetch_fss_attachments(raw_id)
+                else:
+                    attachments = audit_news_scraper.fetch_fsc_attachments(raw_id)
+                pdf_path, raw_text = pdf_ingest.ingest_first(
+                    attachments, audit_news_scraper.download_pdf, meta["ntt_id"]
+                )
+            except Exception as e:
+                logger.warning(f"첨부 수집 실패 ({meta['ntt_id']}): {e}")
+                pdf_path, raw_text = None, None
+
             # DB 저장
             report = AuditNewsReport(
                 source=meta["source"],
@@ -343,6 +255,8 @@ def _do_crawl(max_pages: int, db: Session):
                 department=meta.get("department", ""),
                 url=meta.get("url", ""),
                 ai_reason=ai_reason,
+                pdf_path=pdf_path,
+                raw_text=raw_text,
             )
             db.add(report)
             db.commit()

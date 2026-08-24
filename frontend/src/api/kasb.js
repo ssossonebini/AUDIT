@@ -19,5 +19,3 @@ export const startKasbCrawl = (maxPages = 3) =>
 
 export const getKasbCrawlStatus = () => api.get('/crawl/status').then(r => r.data)
 
-export const summarizeKasbStandard = (id) =>
-  api.post(`/standards/${id}/summarize`).then(r => r.data)

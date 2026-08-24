@@ -22,6 +22,7 @@ class FssArticleSchema(BaseModel):
     summary: Optional[str] = None
     issues: list[AuditIssueSchema] = []
     created_at: datetime
+    has_raw_text: bool = False
 
     model_config = {"from_attributes": True}
 

@@ -20,6 +20,11 @@ class FssArticle(Base):
     summary = Column(Text)             # 요약 텍스트
     created_at = Column(DateTime, default=datetime.utcnow)
 
+    @property
+    def has_raw_text(self) -> bool:
+        """PDF 본문 수집 여부 (분석 가능 상태 표시용)"""
+        return bool(self.raw_text)
+
     issues = relationship("AuditIssue", back_populates="article", cascade="all, delete-orphan")
 
 
@@ -53,6 +58,11 @@ class PcaobPublication(Base):
     summary = Column(Text)                             # 요약 텍스트
     created_at = Column(DateTime, default=datetime.utcnow)
 
+    @property
+    def has_raw_text(self) -> bool:
+        """PDF 본문 수집 여부 (분석 가능 상태 표시용)"""
+        return bool(self.raw_text)
+
 
 class EsmaReport(Base):
     """ESMA European Common Enforcement Priorities (ECEP) 보고서"""
@@ -70,6 +80,11 @@ class EsmaReport(Base):
     raw_text = Column(Text)                              # PDF 전체 텍스트
     summary = Column(Text)                               # 요약 텍스트
     created_at = Column(DateTime, default=datetime.utcnow)
+
+    @property
+    def has_raw_text(self) -> bool:
+        """PDF 본문 수집 여부 (분석 가능 상태 표시용)"""
+        return bool(self.raw_text)
 
 
 class KasbStandard(Base):
@@ -95,6 +110,11 @@ class KasbStandard(Base):
     summary = Column(Text)                                  # AI 요약 텍스트
     created_at = Column(DateTime, default=datetime.utcnow)
 
+    @property
+    def has_raw_text(self) -> bool:
+        """PDF 본문 수집 여부 (분석 가능 상태 표시용)"""
+        return bool(self.raw_text)
+
 
 class AuditNewsReport(Base):
     """FSS·FSC 보도자료 중 회계감사 관련 항목"""
@@ -113,6 +133,11 @@ class AuditNewsReport(Base):
     raw_text   = Column(Text)
     summary    = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+    @property
+    def has_raw_text(self) -> bool:
+        """PDF 본문 수집 여부 (분석 가능 상태 표시용)"""
+        return bool(self.raw_text)
 
 
 class CrawlHistory(Base):
@@ -141,3 +166,8 @@ class FssCaseReport(Base):
     raw_text = Column(Text)                             # PDF 전체 텍스트
     summary = Column(Text)                              # 요약 텍스트
     created_at = Column(DateTime, default=datetime.utcnow)
+
+    @property
+    def has_raw_text(self) -> bool:
+        """PDF 본문 수집 여부 (분석 가능 상태 표시용)"""
+        return bool(self.raw_text)

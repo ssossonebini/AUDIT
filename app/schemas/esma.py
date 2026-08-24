@@ -28,6 +28,7 @@ class EsmaReportSchema(BaseModel):
     category: Optional[str] = None
     summary: Optional[str] = None
     created_at: datetime
+    has_raw_text: bool = False
 
     model_config = {"from_attributes": True}
 

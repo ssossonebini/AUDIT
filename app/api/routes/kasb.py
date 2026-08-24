@@ -6,7 +6,6 @@ import re
 import time
 from typing import Optional
 
-import anthropic
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 
@@ -16,6 +15,7 @@ from app.db.models import KasbStandard
 from app.schemas.kasb import KasbStandardSchema, KasbStandardListItem, KasbCrawlStatus
 from app.crawler import kasb_scraper
 from app.crawler import pdf_parser
+from app.crawler import pdf_ingest
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -63,129 +63,6 @@ def get_standard(standard_id: str, db: Session = Depends(get_db)):
     if not std:
         raise HTTPException(status_code=404, detail="기준서를 찾을 수 없습니다.")
     return std
-
-
-@router.post("/standards/{standard_id}/summarize")
-def summarize_standard(standard_id: str, db: Session = Depends(get_db)):
-    """Claude AI로 기준서 변경 내용 요약 (PDF 또는 description 기반)"""
-    if not settings.ANTHROPIC_API_KEY:
-        raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY가 설정되지 않았습니다.")
-
-    if standard_id.isdigit():
-        std = db.query(KasbStandard).filter(KasbStandard.id == int(standard_id)).first()
-    else:
-        std = db.query(KasbStandard).filter(KasbStandard.standard_id == standard_id).first()
-    if not std:
-        raise HTTPException(status_code=404, detail="기준서를 찾을 수 없습니다.")
-
-    # raw_text 없으면 PDF 다운로드 시도
-    if not std.raw_text and std.pdf_url:
-        try:
-            session = kasb_scraper._session()
-            path = kasb_scraper.download_pdf(std.pdf_url, std.standard_id, session)
-            if path:
-                raw_text = pdf_parser.extract_text(path)
-                if raw_text:
-                    std.raw_text = raw_text[:50000]
-                    std.pdf_path = path
-                    db.commit()
-        except Exception as e:
-            logger.warning(f"PDF 다운로드 실패, description으로 대체: {e}")
-
-    # raw_text 또는 description 사용
-    content = std.raw_text[:30000] if std.raw_text else std.description or ""
-    if not content:
-        raise HTTPException(
-            status_code=404,
-            detail="요약할 내용이 없습니다. PDF URL이 있는 기준서를 이용하거나 KASB 원문을 직접 확인해주세요."
-        )
-
-    client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
-
-    message = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=2048,
-        messages=[
-            {
-                "role": "user",
-                "content": f"""다음은 한국회계기준원(KASB)이 제정 또는 개정한 K-IFRS 기준서 관련 내용입니다.
-기준서명: {std.standard_number} {std.standard_name}
-개정유형: {std.amendment_type}
-시행일: {std.effective_date}
-{f'대체기준서: {std.replaced_standard}' if std.replaced_standard else ''}
-
-아래 항목으로 핵심 내용을 한국어로 요약해주세요:
-
-1. 전체 개요 (2-3문장: 무엇이 왜 바뀌었는지)
-2. 주요 변경 사항 목록 (각 변경 사항과 한 줄 설명)
-3. 기업 회계담당자 및 감사인에 대한 주요 시사점
-
-내용:
-{content}""",
-            }
-        ],
-    )
-
-    raw = message.content[0].text.strip()
-    structured = _parse_kasb_summary(raw)
-    return {"summary": raw, "structured": structured}
-
-
-def _parse_kasb_summary(text: str) -> dict:
-    lines = text.splitlines()
-    overview_lines = []
-    changes = []
-    implications = []
-    section = None
-
-    for line in lines:
-        stripped = line.strip()
-
-        if re.search(r"전체\s*개요", stripped):
-            section = "overview"
-            continue
-        if re.search(r"주요\s*변경|변경\s*사항", stripped):
-            section = "changes"
-            continue
-        if re.search(r"시사점|주의사항|감사인|회계담당", stripped) and section != "implications":
-            section = "implications"
-            continue
-
-        if not stripped or re.match(r"^-{3,}$", stripped) or re.match(r"^#{1,4}\s", stripped):
-            continue
-
-        if section == "overview":
-            overview_lines.append(re.sub(r"\*\*([^*]+)\*\*", r"\1", stripped))
-
-        elif section == "changes":
-            if stripped.startswith("|"):
-                cells = [c.strip() for c in stripped.split("|") if c.strip()]
-                if len(cells) >= 2 and not re.match(r"^[-:]+$", cells[0]):
-                    title = re.sub(r"\*\*([^*]+)\*\*", r"\1", cells[0])
-                    desc = re.sub(r"\*\*([^*]+)\*\*", r"\1", cells[-1])
-                    changes.append({"number": len(changes) + 1, "title": title, "description": desc})
-            else:
-                m = re.match(
-                    r"^[①②③④⑤⑥⑦⑧⑨⑩\-\*\d\.]+\s*\*?\*?([^*:：]+)\*?\*?[：:]\s*(.+)",
-                    stripped,
-                )
-                if m:
-                    changes.append({
-                        "number": len(changes) + 1,
-                        "title": m.group(1).strip(),
-                        "description": re.sub(r"\*\*([^*]+)\*\*", r"\1", m.group(2).strip()),
-                    })
-
-        elif section == "implications":
-            if stripped.startswith(("-", "•", "*")):
-                item = re.sub(r"^[-•\*]\s*", "", stripped)
-                implications.append(re.sub(r"\*\*([^*]+)\*\*", r"\1", item))
-
-    return {
-        "overview": " ".join(overview_lines[:4]),
-        "changes": changes,
-        "implications": implications,
-    }
 
 
 @router.post("/crawl", response_model=KasbCrawlStatus)
@@ -240,6 +117,11 @@ def _do_crawl(max_pages: int, db: Session):
                 _crawl_state["processed"] += 1
                 continue
 
+            pdf_url = meta.get("pdf_url", "")
+            pdf_path, raw_text = pdf_ingest.ingest(
+                kasb_scraper.download_pdf, pdf_url, sid, kasb_scraper._session()
+            ) if pdf_url else (None, None)
+
             std = KasbStandard(
                 standard_id=sid,
                 standard_number=meta.get("standard_number", ""),
@@ -252,8 +134,10 @@ def _do_crawl(max_pages: int, db: Session):
                 early_adoption="Y" if meta.get("early_adoption") else "N",
                 replaced_standard=meta.get("replaced_standard", ""),
                 url=meta.get("url", ""),
-                pdf_url=meta.get("pdf_url", ""),
+                pdf_url=pdf_url,
                 description=meta.get("description", ""),
+                pdf_path=pdf_path,
+                raw_text=raw_text,
             )
             db.add(std)
             db.commit()
