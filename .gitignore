@@ -38,6 +38,10 @@ Thumbs.db
 # Downloaded PDFs
 downloads/
 
+# 회사별 작업폴더 — 재무제표·뉴스·카드뉴스 이미지가 쌓이는 곳.
+# 저장소를 무겁게 하고 회사 자료가 섞이므로 로컬에만 둔다.
+workspace/
+
 # Frontend
 frontend/node_modules/
 frontend/dist/

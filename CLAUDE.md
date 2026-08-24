@@ -54,7 +54,8 @@ AUDIT/
 │   ├── api/                    # axios 모듈 (소스별)
 │   └── components/             # Card / Detail / CrawlPanel + SourcePanel
 ├── audit.db                    # ⚠️ gitignore — 로컬에만 존재
-└── downloads/                  # ⚠️ gitignore — 수집된 PDF
+├── downloads/                  # ⚠️ gitignore — 수집된 PDF
+└── workspace/                  # ⚠️ gitignore — 회사별 작업폴더·카드뉴스
 ```
 
 ---
