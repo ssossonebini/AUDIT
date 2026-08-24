@@ -15,6 +15,7 @@ from app.db.models import FssCaseReport
 from app.schemas.fss_case import FssCaseReportSchema, FssCaseReportListItem, FssCaseCrawlStatus
 from app.crawler import fss_case_scraper
 from app.crawler import pdf_parser
+from app.crawler import pdf_ingest
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -113,20 +114,13 @@ def _do_crawl(max_pages: int, db: Session):
             detail = fss_case_scraper.fetch_case_detail(ntt_id, session)
             time.sleep(0.5)
 
-            pdf_path = None
-            raw_text = ""
-
-            # PDF 다운로드 및 파싱
-            for attachment in detail.get("attachments", []):
-                url = attachment["url"]
-                if ".pdf" in url.lower() or "fileDown" in url or "atchFileId" in url:
-                    path = fss_case_scraper.download_pdf(url, ntt_id, session)
-                    if path:
-                        pdf_path = path
-                        raw_text = pdf_parser.extract_text(path)
-                        if raw_text:
-                            break
-                    time.sleep(0.5)
+            # PDF 다운로드 및 파싱 (HWP 첨부는 뒤로 미루고 매직바이트로 검증)
+            pdf_path, raw_text = pdf_ingest.ingest_first(
+                detail.get("attachments", []),
+                fss_case_scraper.download_pdf,
+                ntt_id,
+                session,
+            )
 
             case = FssCaseReport(
                 ntt_id=ntt_id,
@@ -136,7 +130,7 @@ def _do_crawl(max_pages: int, db: Session):
                 period=meta.get("period", ""),
                 url=meta["url"],
                 pdf_path=pdf_path,
-                raw_text=raw_text[:50000] if raw_text else None,
+                raw_text=raw_text,
             )
             db.add(case)
             db.commit()

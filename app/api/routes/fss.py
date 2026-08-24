@@ -15,6 +15,7 @@ from app.db.models import FssArticle, AuditIssue
 from app.schemas.fss import FssArticleSchema, FssArticleListItem, CrawlStatus
 from app.crawler import fss_scraper
 from app.crawler import pdf_parser
+from app.crawler import pdf_ingest
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -124,19 +125,14 @@ def _do_crawl(max_pages: int, db: Session):
             detail = fss_scraper.fetch_article_detail(ntt_id, session)
             time.sleep(0.5)
 
-            pdf_path = None
-            raw_text = ""
-
-            # 3단계: PDF 다운로드 및 파싱
-            for attachment in detail.get("attachments", []):
-                url = attachment["url"]
-                if ".pdf" in url.lower() or "fileDown" in url:
-                    path = fss_scraper.download_pdf(url, ntt_id, session)
-                    if path:
-                        pdf_path = path
-                        raw_text = pdf_parser.extract_text(path)
-                        break
-                    time.sleep(0.5)
+            # 3단계: PDF 다운로드 및 파싱 (HWP 첨부는 뒤로 미루고 매직바이트로 검증)
+            pdf_path, raw_text = pdf_ingest.ingest_first(
+                detail.get("attachments", []),
+                fss_scraper.download_pdf,
+                ntt_id,
+                session,
+            )
+            raw_text = raw_text or ""
 
             # 4단계: 이슈 파싱 및 요약
             issues_data = pdf_parser.parse_audit_issues(raw_text) if raw_text else []

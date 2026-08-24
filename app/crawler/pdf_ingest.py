@@ -3,9 +3,16 @@
 크롤링 시점에 첨부 PDF를 내려받아 텍스트를 추출한다.
 AI 요약 기능을 제거한 뒤에도 raw_text(PDF 전문)는 반드시 남아야 하므로,
 모든 소스의 크롤링 경로에서 이 모듈을 사용한다.
+
+주의: 금감원·금융위 게시물은 같은 문서를 .hwp 와 .pdf 두 형식으로 첨부하며
+HTML에서 HWP 링크가 먼저 나오는 경우가 많다. 확장자만 믿으면 HWP를 .pdf 로
+저장하게 되고 pdfplumber가 열지 못해 raw_text가 비게 된다.
+따라서 (1) PDF로 보이는 첨부를 먼저 시도하고 (2) 내려받은 내용의 매직바이트를
+검증한다.
 """
 
 import logging
+import os
 import time
 from typing import Callable, Iterable, Optional, Tuple
 
@@ -14,6 +21,19 @@ from app.crawler import pdf_parser
 logger = logging.getLogger(__name__)
 
 MAX_RAW_TEXT = 50000
+PDF_MAGIC = b"%PDF"
+
+# 명백히 PDF가 아닌 첨부 (한글·워드·엑셀·압축)
+NON_PDF_EXT = (".hwp", ".hwpx", ".doc", ".docx", ".xls", ".xlsx", ".zip", ".ppt", ".pptx")
+
+
+def is_pdf_file(path: str) -> bool:
+    """파일 선두 매직바이트로 실제 PDF 여부를 판정한다."""
+    try:
+        with open(path, "rb") as f:
+            return f.read(5).startswith(PDF_MAGIC)
+    except OSError:
+        return False
 
 
 def ingest(
@@ -22,7 +42,9 @@ def ingest(
     uid: str,
     session=None,
 ) -> Tuple[Optional[str], Optional[str]]:
-    """단일 PDF URL을 내려받아 텍스트를 추출한다.
+    """단일 URL을 내려받아 PDF임을 확인한 뒤 텍스트를 추출한다.
+
+    PDF가 아니면 파일을 지워 다음 시도(다른 첨부·다음 크롤링)를 막지 않는다.
 
     Returns:
         (pdf_path, raw_text) — 실패 시 (None, None)
@@ -35,9 +57,14 @@ def ingest(
         if not path:
             return None, None
 
+        if not is_pdf_file(path):
+            logger.warning(f"PDF가 아닌 첨부 — 폐기하고 다음 첨부 시도: {url}")
+            _discard(path)
+            return None, None
+
         text = pdf_parser.extract_text(path)
         if not text:
-            logger.warning(f"PDF 텍스트 추출 실패: {path}")
+            logger.warning(f"PDF 텍스트 추출 실패(스캔본 가능성): {path}")
             return path, None
 
         return path, text[:MAX_RAW_TEXT]
@@ -56,12 +83,14 @@ def ingest_first(
 ) -> Tuple[Optional[str], Optional[str]]:
     """첨부 목록에서 텍스트 추출에 성공하는 첫 PDF를 수집한다.
 
+    PDF로 보이는 첨부를 먼저 시도하고, HWP 등은 뒤로 미룬다.
+
     Returns:
         (pdf_path, raw_text) — 실패 시 (None, None)
     """
-    for att in attachments or []:
+    for att in prefer_pdf(attachments):
         url = att.get("url", "")
-        if not _looks_like_pdf(url):
+        if not url:
             continue
 
         path, text = ingest(download_fn, url, uid, session)
@@ -74,8 +103,23 @@ def ingest_first(
     return None, None
 
 
-def _looks_like_pdf(url: str) -> bool:
-    if not url:
-        return False
-    lowered = url.lower()
-    return ".pdf" in lowered or "filedown" in lowered or "atchfileid" in lowered
+def prefer_pdf(attachments: Iterable[dict]) -> list[dict]:
+    """PDF로 보이는 첨부를 앞으로, 비-PDF 확장자를 뒤로 정렬한다."""
+    items = [a for a in (attachments or []) if isinstance(a, dict) and a.get("url")]
+    return sorted(items, key=_priority)
+
+
+def _priority(att: dict) -> int:
+    hint = f"{att.get('name', '')} {att.get('url', '')}".lower()
+    if ".pdf" in hint:
+        return 0                      # 확실한 PDF
+    if any(ext in hint for ext in NON_PDF_EXT):
+        return 2                      # 확실히 PDF 아님 — 마지막에만 시도
+    return 1                          # 판단 불가 (fileDown 링크 등)
+
+
+def _discard(path: str) -> None:
+    try:
+        os.remove(path)
+    except OSError:
+        pass
