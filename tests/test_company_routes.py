@@ -63,17 +63,16 @@ def test_registering_the_same_corp_code_twice_is_rejected(client, monkeypatch):
     assert client.post(f"{PREFIX}/companies", json=payload).status_code == 409
 
 
-def test_collect_financials_stores_three_years_from_one_call(client, monkeypatch):
+def test_collect_financials_stores_both_divisions_for_one_year(client, monkeypatch):
+    """연결과 별도를 모두 받아야 한다. 감사 대상은 별도인 경우가 많다."""
     monkeypatch.setattr(dart_client, "fetch_company",
                         lambda code: {"corp_name": "삼성전자"})
     calls = []
 
     def fake_fetch(corp_code, year, fs_div="CFS", reprt_code=None):
         calls.append((year, fs_div))
-        return [
-            _annual_row("BS", "자산총계", 1, "3,000", "2,000", "1,000"),
-            _annual_row("IS", "매출액", 2, "5,000", "4,500", "4,000"),
-        ]
+        base = 3000 if fs_div == "CFS" else 1500
+        return [_annual_row("BS", "자산총계", 1, str(base), "2,000", "1,000")]
 
     monkeypatch.setattr(dart_client, "fetch_financials", fake_fetch)
 
@@ -86,16 +85,35 @@ def test_collect_financials_stores_three_years_from_one_call(client, monkeypatch
 
     # 감사대상연도(2026)의 사업보고서는 아직 없으므로 직전 연도를 쓴다
     assert summary["bsns_year"] == 2025
-    assert calls == [(2025, "CFS")], "연도별로 세 번 호출하면 안 된다"
+    # 연도별로 반복 호출하지 않는다 — 구분별로 한 번씩만
+    assert calls == [(2025, "CFS"), (2025, "OFS")]
+    assert {c["fs_div"] for c in summary["collected"]} == {"CFS", "OFS"}
 
     lines = client.get(f"{PREFIX}/companies/{created['id']}/financials").json()
-    assets = next(x for x in lines if x["account_nm"] == "자산총계")
-    assert (assets["thstrm_amount"], assets["frmtrm_amount"],
-            assets["bfefrmtrm_amount"]) == (3000, 2000, 1000)
+    assert {l["fs_div"] for l in lines} == {"CFS", "OFS"}
 
 
-def test_collect_falls_back_to_separate_statements(client, monkeypatch):
-    """종속기업이 없으면 연결재무제표가 없다. 개별로 내려가야 한다."""
+def test_financials_can_be_filtered_by_division(client, monkeypatch):
+    monkeypatch.setattr(dart_client, "fetch_company",
+                        lambda code: {"corp_name": "삼성전자"})
+
+    def fake_fetch(corp_code, year, fs_div="CFS", reprt_code=None):
+        amount = "3,000" if fs_div == "CFS" else "1,500"
+        return [_annual_row("BS", "자산총계", 1, amount, "2,000", "1,000")]
+
+    monkeypatch.setattr(dart_client, "fetch_financials", fake_fetch)
+    created = client.post(f"{PREFIX}/companies",
+                          json={"corp_code": "00126380", "audit_year": 2026}).json()
+    client.post(f"{PREFIX}/companies/{created['id']}/financials")
+
+    separate = client.get(f"{PREFIX}/companies/{created['id']}/financials",
+                          params={"fs_div": "OFS"}).json()
+    assert len(separate) == 1
+    assert separate[0]["thstrm_amount"] == 1500
+
+
+def test_collect_keeps_going_when_one_division_is_absent(client, monkeypatch):
+    """종속기업이 없으면 연결재무제표를 제출하지 않는다. 별도만 저장하면 된다."""
     monkeypatch.setattr(dart_client, "fetch_company",
                         lambda code: {"corp_name": "비상장회사"})
     seen = []
@@ -113,8 +131,27 @@ def test_collect_falls_back_to_separate_statements(client, monkeypatch):
     r = client.post(f"{PREFIX}/companies/{created['id']}/financials")
 
     assert r.status_code == 200, r.text
-    assert r.json()["fs_div"] == "OFS"
+    body = r.json()
+    assert [c["fs_div"] for c in body["collected"]] == ["OFS"]
+    assert "공시되지 않았습니다" in body["message"]
     assert seen == ["CFS", "OFS"]
+
+
+def test_collect_reports_a_real_dart_error_instead_of_swallowing_it(client, monkeypatch):
+    """013(데이터 없음)이 아닌 오류는 삼키면 안 된다 — 한도 초과 등."""
+    monkeypatch.setattr(dart_client, "fetch_company",
+                        lambda code: {"corp_name": "삼성전자"})
+
+    def over_limit(corp_code, year, fs_div="CFS", reprt_code=None):
+        raise dart_client.DartError("020")
+
+    monkeypatch.setattr(dart_client, "fetch_financials", over_limit)
+    created = client.post(f"{PREFIX}/companies",
+                          json={"corp_code": "00126380", "audit_year": 2026}).json()
+
+    r = client.post(f"{PREFIX}/companies/{created['id']}/financials")
+    assert r.status_code == 502
+    assert "요청 제한" in r.json()["detail"]
 
 
 def test_recollecting_a_year_replaces_rather_than_duplicates(client, monkeypatch):
@@ -130,7 +167,7 @@ def test_recollecting_a_year_replaces_rather_than_duplicates(client, monkeypatch
     client.post(f"{PREFIX}/companies/{created['id']}/financials")
 
     lines = client.get(f"{PREFIX}/companies/{created['id']}/financials").json()
-    assert len(lines) == 1, "재수집이 행을 중복 적재했습니다"
+    assert len(lines) == 2, "재수집이 행을 중복 적재했습니다"   # 연결 1 + 별도 1
 
 
 def test_collect_rejects_years_before_dart_coverage(client, monkeypatch):

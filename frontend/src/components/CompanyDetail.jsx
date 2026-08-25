@@ -3,6 +3,11 @@ import { getCompany, getFinancials } from '../api/company'
 
 const ACCENT = '#1a5c2e'
 
+const DIVISIONS = [
+  { key: 'CFS', label: '연결' },
+  { key: 'OFS', label: '별도' },
+]
+
 const STATEMENTS = [
   { key: 'BS',  label: '재무상태표' },
   { key: 'IS',  label: '손익계산서' },
@@ -15,6 +20,7 @@ export default function CompanyDetail({ companyId, onBack }) {
   const [company, setCompany] = useState(null)
   const [lines, setLines]     = useState([])
   const [sjDiv, setSjDiv]     = useState('BS')
+  const [fsDiv, setFsDiv]     = useState('CFS')
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -27,8 +33,13 @@ export default function CompanyDetail({ companyId, onBack }) {
   if (loading) return <div style={center}>불러오는 중...</div>
   if (!company) return <div style={center}>회사를 찾을 수 없습니다.</div>
 
-  const available = STATEMENTS.filter(s => lines.some(l => l.sj_div === s.key))
-  const shown = lines.filter(l => l.sj_div === sjDiv)
+  const divisions = DIVISIONS.filter(d => lines.some(l => l.fs_div === d.key))
+  const activeFs = divisions.some(d => d.key === fsDiv) ? fsDiv : divisions[0]?.key
+  const inDivision = lines.filter(l => l.fs_div === activeFs)
+
+  const available = STATEMENTS.filter(s => inDivision.some(l => l.sj_div === s.key))
+  const activeSj = available.some(s => s.key === sjDiv) ? sjDiv : available[0]?.key
+  const shown = inDivision.filter(l => l.sj_div === activeSj)
   const period = shown[0]?.thstrm_nm
 
   return (
@@ -67,6 +78,31 @@ export default function CompanyDetail({ companyId, onBack }) {
           </div>
         ) : (
           <>
+            {/* 연결 / 별도 */}
+            <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
+              {divisions.map(d => (
+                <button
+                  key={d.key}
+                  onClick={() => setFsDiv(d.key)}
+                  style={{
+                    padding: '6px 18px', borderRadius: 8, fontSize: 13, cursor: 'pointer',
+                    border: `1px solid ${activeFs === d.key ? ACCENT : '#dde2ea'}`,
+                    background: activeFs === d.key ? ACCENT : '#fff',
+                    color: activeFs === d.key ? '#fff' : '#555',
+                    fontWeight: 700,
+                  }}
+                >
+                  {d.label}재무제표
+                </button>
+              ))}
+              {divisions.length === 1 && (
+                <span style={{ fontSize: 12, color: '#8a9ab0', alignSelf: 'center', marginLeft: 4 }}>
+                  {divisions[0].key === 'CFS' ? '별도' : '연결'}재무제표는 공시되지 않았습니다
+                </span>
+              )}
+            </div>
+
+            {/* 재무제표 종류 */}
             <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
               {available.map(s => (
                 <button
@@ -74,10 +110,10 @@ export default function CompanyDetail({ companyId, onBack }) {
                   onClick={() => setSjDiv(s.key)}
                   style={{
                     padding: '5px 14px', borderRadius: 20, fontSize: 13, cursor: 'pointer',
-                    border: sjDiv === s.key ? `2px solid ${ACCENT}` : '1px solid #dde2ea',
-                    background: sjDiv === s.key ? ACCENT : '#fff',
-                    color: sjDiv === s.key ? '#fff' : '#555',
-                    fontWeight: sjDiv === s.key ? 700 : 400,
+                    border: activeSj === s.key ? `2px solid ${ACCENT}` : '1px solid #dde2ea',
+                    background: activeSj === s.key ? ACCENT : '#fff',
+                    color: activeSj === s.key ? '#fff' : '#555',
+                    fontWeight: activeSj === s.key ? 700 : 400,
                   }}
                 >
                   {s.label}

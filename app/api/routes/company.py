@@ -17,6 +17,7 @@ from app.schemas.company import (
     CompanySchema,
     CorpSearchResult,
     FinancialLine,
+    FinancialsCollected,
     FinancialsSummary,
 )
 from app.crawler import dart_client
@@ -135,53 +136,60 @@ def collect_financials(
             status_code=400, detail="DART 재무제표는 2015년 이후만 제공됩니다."
         )
 
-    fs_div, rows = _dart_call(
-        dart_client.fetch_financials_with_fallback, company.corp_code, year
-    )
-    if not rows:
+    divisions = _dart_call(dart_client.fetch_all_divisions, company.corp_code, year)
+    if not divisions:
         raise HTTPException(
             status_code=404,
             detail=f"{year}년 사업보고서 재무제표가 없습니다. 공시 여부를 확인하세요.",
         )
 
-    # 같은 연도를 다시 수집하면 교체한다
+    # 같은 연도를 다시 수집하면 교체한다 (연결·별도 모두)
     db.query(FinancialStatement).filter(
         FinancialStatement.company_id == company.id,
         FinancialStatement.bsns_year == year,
     ).delete()
 
-    counts: Counter = Counter()
-    for row in rows:
-        sj_div = row.get("sj_div", "")
-        counts[sj_div] += 1
-        db.add(FinancialStatement(
-            company_id=company.id,
-            bsns_year=year,
-            reprt_code=dart_client.REPRT_ANNUAL,
+    collected = []
+    for fs_div, rows in divisions.items():
+        counts: Counter = Counter()
+        for row in rows:
+            sj_div = row.get("sj_div", "")
+            counts[sj_div] += 1
+            db.add(FinancialStatement(
+                company_id=company.id,
+                bsns_year=year,
+                reprt_code=dart_client.REPRT_ANNUAL,
+                fs_div=fs_div,
+                sj_div=sj_div,
+                sj_nm=row.get("sj_nm"),
+                account_id=row.get("account_id"),
+                account_nm=row.get("account_nm"),
+                account_detail=row.get("account_detail"),
+                ord=_as_int(row.get("ord")),
+                currency=row.get("currency"),
+                thstrm_nm=row.get("thstrm_nm"),
+                thstrm_amount=dart_client.current_amount(row),
+                frmtrm_amount=dart_client.prior_amount(row),
+                # 사업보고서에만 있는 키다. 없으면 None 으로 둔다.
+                bfefrmtrm_amount=dart_client.parse_amount(row.get("bfefrmtrm_amount")),
+            ))
+
+        collected.append(FinancialsCollected(
             fs_div=fs_div,
-            sj_div=sj_div,
-            sj_nm=row.get("sj_nm"),
-            account_id=row.get("account_id"),
-            account_nm=row.get("account_nm"),
-            account_detail=row.get("account_detail"),
-            ord=_as_int(row.get("ord")),
-            currency=row.get("currency"),
-            thstrm_nm=row.get("thstrm_nm"),
-            thstrm_amount=dart_client.current_amount(row),
-            frmtrm_amount=dart_client.prior_amount(row),
-            # 사업보고서에만 있는 키다. 없으면 None 으로 둔다.
-            bfefrmtrm_amount=dart_client.parse_amount(row.get("bfefrmtrm_amount")),
+            label=dart_client.FS_DIV_LABELS[fs_div],
+            total_rows=len(rows),
+            by_statement=dict(counts),
         ))
 
     db.commit()
 
-    label = "연결" if fs_div == "CFS" else "개별"
+    parts = [f"{c.label} {c.total_rows}행" for c in collected]
+    missing = "" if len(collected) == 2 else " (다른 구분은 공시되지 않았습니다)"
     return FinancialsSummary(
         bsns_year=year,
-        fs_div=fs_div,
-        total_rows=len(rows),
-        by_statement=dict(counts),
-        message=f"{year}년 {label}재무제표 {len(rows)}행 수집 (당기·전기·전전기 포함)",
+        collected=collected,
+        message=f"{year}년 재무제표 수집 — {' · '.join(parts)}"
+                f" · 당기·전기·전전기 포함{missing}",
     )
 
 
@@ -189,15 +197,20 @@ def collect_financials(
 def list_financials(
     company_id: int,
     bsns_year: Optional[int] = None,
+    fs_div: Optional[str] = None,
     sj_div: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
     q = db.query(FinancialStatement).filter(FinancialStatement.company_id == company_id)
     if bsns_year:
         q = q.filter(FinancialStatement.bsns_year == bsns_year)
+    if fs_div:
+        q = q.filter(FinancialStatement.fs_div == fs_div)
     if sj_div:
         q = q.filter(FinancialStatement.sj_div == sj_div)
-    return q.order_by(FinancialStatement.sj_div, FinancialStatement.ord).all()
+    return q.order_by(
+        FinancialStatement.fs_div, FinancialStatement.sj_div, FinancialStatement.ord
+    ).all()
 
 
 def _as_int(value) -> Optional[int]:

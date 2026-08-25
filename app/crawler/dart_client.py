@@ -189,26 +189,36 @@ def fetch_financials(
     return data.get("list", [])
 
 
-def fetch_financials_with_fallback(
-    corp_code: str, bsns_year: int, reprt_code: str = REPRT_ANNUAL
-) -> tuple[str, list[dict]]:
-    """연결(CFS)을 먼저 시도하고, 없으면 개별(OFS)로 내려간다.
+FS_DIV_LABELS = {"CFS": "연결", "OFS": "별도"}
 
-    종속기업이 없는 회사는 연결재무제표를 제출하지 않는다.
+
+def fetch_all_divisions(
+    corp_code: str, bsns_year: int, reprt_code: str = REPRT_ANNUAL
+) -> dict[str, list[dict]]:
+    """연결(CFS)과 별도(OFS)를 모두 받아온다.
+
+    감사 대상은 별도재무제표인 경우가 많고, 연결과의 비교도 필요하므로
+    둘 중 하나로 폴백하지 않고 있는 대로 가져온다. 종속기업이 없는 회사는
+    연결을 제출하지 않으므로 한쪽만 돌아오는 것이 정상이다.
 
     Returns:
-        (실제로 받아온 fs_div, 행 목록)
+        {"CFS": [...], "OFS": [...]} — 없는 구분은 키 자체가 빠진다.
     """
-    try:
-        rows = fetch_financials(corp_code, bsns_year, "CFS", reprt_code)
-        if rows:
-            return "CFS", rows
-    except DartError as e:
-        if e.status != "013":       # 013 = 데이터 없음 → 개별로 재시도
-            raise
-        logger.info(f"연결재무제표 없음 ({corp_code} {bsns_year}) — 개별로 시도")
+    result: dict[str, list[dict]] = {}
 
-    return "OFS", fetch_financials(corp_code, bsns_year, "OFS", reprt_code)
+    for fs_div in ("CFS", "OFS"):
+        try:
+            rows = fetch_financials(corp_code, bsns_year, fs_div, reprt_code)
+            if rows:
+                result[fs_div] = rows
+        except DartError as e:
+            if e.status != "013":       # 013 = 데이터 없음. 그 외는 진짜 오류다
+                raise
+            logger.info(
+                f"{FS_DIV_LABELS[fs_div]}재무제표 없음 ({corp_code} {bsns_year})"
+            )
+
+    return result
 
 
 # ── 응답 파싱 ──────────────────────────────────────────────────────

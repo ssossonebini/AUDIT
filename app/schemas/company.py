@@ -36,6 +36,7 @@ class CompanySchema(CompanyListItem):
 
 
 class FinancialLine(BaseModel):
+    fs_div: Optional[str] = None
     sj_div: Optional[str] = None
     sj_nm: Optional[str] = None
     account_nm: Optional[str] = None
@@ -50,10 +51,16 @@ class FinancialLine(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class FinancialsSummary(BaseModel):
-    """수집 결과 요약 — 어느 판본을 몇 줄 받았는지."""
-    bsns_year: int
-    fs_div: str            # CFS=연결 / OFS=개별
+class FinancialsCollected(BaseModel):
+    """재무제표 구분 하나의 수집 결과."""
+    fs_div: str            # CFS=연결 / OFS=별도
+    label: str             # "연결" / "별도"
     total_rows: int
     by_statement: dict[str, int]
+
+
+class FinancialsSummary(BaseModel):
+    """수집 결과 요약 — 연결·별도를 모두 받으므로 목록으로 돌려준다."""
+    bsns_year: int
+    collected: list[FinancialsCollected]
     message: str
