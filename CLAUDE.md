@@ -84,7 +84,8 @@ AUDIT/
 
 ## 실행 방법
 
-`start.bat` 을 더블클릭하면 audit.db 를 백업한 뒤 두 서버를 함께 띄운다.
+`start.bat` 을 더블클릭하면 audit.db 를 백업한 뒤 백엔드·프론트엔드·Claude Code
+세 창을 함께 띄운다 (Claude Code 는 설치돼 있을 때만).
 백업은 3세대(`audit.db.bak` / `.bak2` / `.bak3`)를 돌린다 — 사본이 하나뿐이면
 DB가 비어버린 뒤 서버를 다시 켰을 때 그 빈 DB가 멀쩡한 백업을 덮어쓴다.
 

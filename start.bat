@@ -26,10 +26,21 @@ echo.
 start "AUDIT 백엔드"    cmd /k python -m uvicorn app.main:app --reload
 start "AUDIT 프론트엔드" cmd /k "cd frontend && npm run dev"
 
-echo  백엔드   : http://localhost:8000
-echo  프론트엔드: http://localhost:3000
+REM ── Claude Code (분석·카드뉴스용) ───────────────────────────────
+REM 설치돼 있을 때만 띄운다. 없다고 서버 실행까지 막을 이유는 없다.
+where claude >nul 2>&1
+if errorlevel 1 (
+    set CLAUDE_LINE= Claude Code: 미설치 ^(npm install -g @anthropic-ai/claude-code^)
+) else (
+    start "AUDIT Claude Code" cmd /k claude
+    set CLAUDE_LINE= Claude Code: 별도 창에서 실행됨
+)
+
+echo  백엔드    : http://localhost:8000
+echo  프론트엔드 : http://localhost:3000
+call echo %%CLAUDE_LINE%%
 echo.
 echo  잠시 후 브라우저에서 http://localhost:3000 으로 접속하세요.
-echo  종료하려면 열린 두 창을 닫으면 됩니다.
+echo  종료하려면 열린 창들을 닫으면 됩니다.
 echo.
 pause
