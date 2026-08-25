@@ -219,11 +219,29 @@ def _register(client, monkeypatch, name="삼성전자", code="00126380", year=20
                        json={"corp_code": code, "audit_year": year}).json()
 
 
-def test_target_years_span_the_reports_filed_in_the_window():
-    """직전 회계연도 개시일~오늘 창에는 사업보고서 두 해분이 들어온다."""
+def test_target_years_cover_this_year_and_the_prior_calendar_year():
+    """2026년 기말감사 기준: 2026년 기중 공시 + 2025년 1역년 공시.
+
+    사업보고서는 사업연도 종료 후 90일 안에 제출되므로
+      2026년 기중 공시  → 2026-03 제출된 FY2025 사업보고서
+      2025년 1역년 공시 → 2025-03 제출된 FY2024 사업보고서
+    두 창을 합치면 사업연도 2024·2025 가 대상이 된다.
+    """
     from datetime import date as _date
     assert dart_client.target_business_years(_date(2026, 8, 26)) == [2024, 2025]
-    assert dart_client.target_business_years(_date(2027, 1, 2)) == [2025, 2026]
+
+    # 감사연도가 바뀌면 한 해씩 밀린다
+    assert dart_client.target_business_years(_date(2027, 6, 1)) == [2025, 2026]
+
+
+def test_target_years_still_ask_for_the_year_not_yet_filed():
+    """1~3월에는 직전 사업연도 보고서가 아직 없다.
+
+    그래도 요청은 한다 — 없으면 013 이 오고 빈 항목으로 기록되므로,
+    제출 시점을 코드가 추측하는 것보다 안전하다.
+    """
+    from datetime import date as _date
+    assert dart_client.target_business_years(_date(2026, 1, 15)) == [2024, 2025]
 
 
 def test_collect_disclosures_gathers_every_category(client, monkeypatch):
