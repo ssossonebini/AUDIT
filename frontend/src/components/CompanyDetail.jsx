@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import { getCompany, getFinancials, getDisclosures } from '../api/company'
+import { getCompany, getFinancials, getDisclosures, getFilings } from '../api/company'
 import DisclosurePanel from './DisclosurePanel'
+import FilingPanel from './FilingPanel'
 
 const ACCENT = '#1a5c2e'
 
@@ -21,6 +22,7 @@ export default function CompanyDetail({ companyId, onBack }) {
   const [company, setCompany] = useState(null)
   const [lines, setLines]     = useState([])
   const [discRows, setDiscRows] = useState([])
+  const [filings, setFilings] = useState([])
   const [section, setSection] = useState('fs')   // 'fs' | 'disc'
   const [sjDiv, setSjDiv]     = useState('BS')
   const [fsDiv, setFsDiv]     = useState('CFS')
@@ -29,9 +31,10 @@ export default function CompanyDetail({ companyId, onBack }) {
   useEffect(() => {
     setLoading(true)
     Promise.all([
-      getCompany(companyId), getFinancials(companyId), getDisclosures(companyId),
+      getCompany(companyId), getFinancials(companyId),
+      getDisclosures(companyId), getFilings(companyId),
     ])
-      .then(([c, f, d]) => { setCompany(c); setLines(f); setDiscRows(d) })
+      .then(([c, f, d, g]) => { setCompany(c); setLines(f); setDiscRows(d); setFilings(g) })
       .finally(() => setLoading(false))
   }, [companyId])
 
@@ -79,6 +82,7 @@ export default function CompanyDetail({ companyId, onBack }) {
           {[
             { key: 'fs',   label: '재무제표',  count: lines.length },
             { key: 'disc', label: '주요정보',  count: discRows.length },
+            { key: 'filing', label: '공시',    count: filings.length },
           ].map(t => (
             <button
               key={t.key}
@@ -97,7 +101,8 @@ export default function CompanyDetail({ companyId, onBack }) {
           ))}
         </div>
 
-        {section === 'disc' ? <DisclosurePanel rows={discRows} /> : lines.length === 0 ? (
+        {section === 'filing' ? <FilingPanel rows={filings} />
+         : section === 'disc' ? <DisclosurePanel rows={discRows} /> : lines.length === 0 ? (
           <div style={{
             padding: '14px 18px', background: '#fdf6f0', border: '1px solid #f0dcc8',
             borderRadius: 8, fontSize: 13, color: '#8a5a1a',

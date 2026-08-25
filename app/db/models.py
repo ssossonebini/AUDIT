@@ -194,6 +194,9 @@ class Company(Base):
     disclosures = relationship(
         "DisclosureItem", back_populates="company", cascade="all, delete-orphan"
     )
+    filings = relationship(
+        "DisclosureFiling", back_populates="company", cascade="all, delete-orphan"
+    )
 
     @property
     def has_financials(self) -> bool:
@@ -202,6 +205,10 @@ class Company(Base):
     @property
     def has_disclosures(self) -> bool:
         return bool(self.disclosures)
+
+    @property
+    def has_filings(self) -> bool:
+        return bool(self.filings)
 
 
 class FinancialStatement(Base):
@@ -254,3 +261,31 @@ class DisclosureItem(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     company = relationship("Company", back_populates="disclosures")
+
+
+class DisclosureFiling(Base):
+    """공시 목록 한 건 (DS001 list.json).
+
+    정기보고서 주요정보(disclosure_items)가 사업보고서 시점의 '현황'이라면,
+    이쪽은 기중에 수시로 제출된 '이벤트'다. 자기주식취득결정·합병결정·
+    대규모내부거래처럼 감사 대상 기간에 실제로 벌어진 일이 여기 잡힌다.
+    """
+    __tablename__ = "disclosure_filings"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    company_id = Column(Integer, ForeignKey("companies.id"), index=True)
+
+    rcept_no   = Column(String, index=True)   # 접수번호 — DART 원문 주소에 쓴다
+    report_nm  = Column(String)               # 보고서명
+    flr_nm     = Column(String)               # 제출인
+    rcept_dt   = Column(String, index=True)   # 접수일자 YYYYMMDD
+    pblntf_ty  = Column(String, index=True)   # A~J 공시유형
+    tag        = Column(String, index=True)   # 감사 시사점 (자본거래·사업결합 …)
+    rm         = Column(String)               # 비고 (유/정/공 등)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    company = relationship("Company", back_populates="filings")
+
+    @property
+    def dart_url(self) -> str:
+        return f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={self.rcept_no}"

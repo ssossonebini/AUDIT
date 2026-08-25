@@ -37,3 +37,14 @@ export const getDisclosures = (id, { category, bsnsYear } = {}) => {
   if (bsnsYear) params.bsns_year = bsnsYear
   return api.get(`/companies/${id}/disclosures`, { params }).then(r => r.data)
 }
+
+export const collectFilings = (id, pblntfTy) =>
+  api.post(`/companies/${id}/filings`, null,
+    { params: pblntfTy ? { pblntf_ty: pblntfTy } : {} }).then(r => r.data)
+
+export const getFilings = (id, { tag, pblntfTy } = {}) => {
+  const params = {}
+  if (tag)      params.tag       = tag
+  if (pblntfTy) params.pblntf_ty = pblntfTy
+  return api.get(`/companies/${id}/filings`, { params }).then(r => r.data)
+}

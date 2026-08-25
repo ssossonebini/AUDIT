@@ -25,6 +25,7 @@ class CompanyListItem(BaseModel):
     workspace_path: Optional[str] = None
     has_financials: bool = False
     has_disclosures: bool = False
+    has_filings: bool = False
 
     model_config = {"from_attributes": True}
 
@@ -91,4 +92,28 @@ class DisclosuresSummary(BaseModel):
     period: str                    # 사람이 읽는 수집기간 설명
     collected: list[DisclosureCollected]
     total_rows: int
+    message: str
+
+
+class FilingLine(BaseModel):
+    """공시 목록 한 건."""
+    id: int
+    rcept_no: Optional[str] = None
+    report_nm: Optional[str] = None
+    flr_nm: Optional[str] = None
+    rcept_dt: Optional[str] = None
+    pblntf_ty: Optional[str] = None
+    tag: Optional[str] = None
+    rm: Optional[str] = None
+    dart_url: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+
+class FilingsSummary(BaseModel):
+    period: str                      # 사람이 읽는 수집기간
+    total_rows: int
+    by_type: dict[str, int]          # 공시유형별 건수
+    by_tag: dict[str, int]           # 감사 시사점별 건수
+    untagged: int                    # 규칙에 걸리지 않은 건수
     message: str

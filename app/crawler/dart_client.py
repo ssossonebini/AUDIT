@@ -305,3 +305,101 @@ def target_business_years(today, back_years: int = 2) -> list[int]:
     """
     latest = today.year - 1
     return list(range(latest - back_years + 1, latest + 1))
+
+
+# ── 공시 목록 (DS001 list.json) ────────────────────────────────────
+
+# pblntf_ty 코드. 감사 관련성이 높은 것만 기본값으로 쓴다.
+PUBLIC_TYPES = {
+    "A": "정기공시",
+    "B": "주요사항보고",      # 자기주식취득결정·합병·유상증자 등 기중 이벤트
+    "C": "발행공시",
+    "D": "지분공시",          # 임원·주요주주 소유상황 — 건수가 많고 관련성은 낮다
+    "E": "기타공시",
+    "F": "외부감사관련",      # 감사보고서 제출, 감사인 선임·변경
+    "I": "거래소공시",        # 수시공시·자율공시·공정공시
+    "J": "공정위공시",        # 대규모내부거래 = 특수관계자 거래
+}
+
+DEFAULT_PUBLIC_TYPES = ("B", "F", "I", "J")
+
+MAX_PAGE_COUNT = 100
+
+
+def fetch_disclosure_list(
+    corp_code: str,
+    bgn_de: str,
+    end_de: str,
+    pblntf_ty: Optional[str] = None,
+    max_pages: int = 20,
+) -> list[dict]:
+    """기간·유형별 공시 목록. 페이지를 끝까지 따라간다.
+
+    bgn_de·end_de 는 YYYYMMDD. 주요정보(DS002)와 달리 이쪽은 날짜로 조회하므로
+    "직전 회계연도 개시일 ~ 오늘" 창을 그대로 쓸 수 있다.
+    """
+    items: list[dict] = []
+
+    for page in range(1, max_pages + 1):
+        params = {
+            "corp_code": corp_code,
+            "bgn_de": bgn_de,
+            "end_de": end_de,
+            "page_no": str(page),
+            "page_count": str(MAX_PAGE_COUNT),
+        }
+        if pblntf_ty:
+            params["pblntf_ty"] = pblntf_ty
+
+        try:
+            data = _get("list.json", **params)
+        except DartError as e:
+            if e.status == "013":       # 이 유형에 해당 기간 공시가 없다
+                break
+            raise
+
+        rows = data.get("list", [])
+        items.extend(rows)
+
+        if page >= int(data.get("total_page", 1) or 1):
+            break
+
+    return items
+
+
+# 보고서명 → 감사 시사점. 위에서부터 먼저 맞는 것을 쓴다.
+# 보고서명이 정형화돼 있어 규칙만으로 충분하다 (AI 호출 불필요).
+FILING_TAGS: list[tuple[str, tuple[str, ...]]] = [
+    ("계속기업",   ("부도", "당좌거래정지", "영업정지", "회생절차", "파산",
+                   "채권은행", "관리절차", "해산사유", "자본잠식")),
+    ("사업결합",   ("합병", "분할", "영업양수", "영업양도", "주식교환", "주식이전",
+                   "자산양수", "자산양도", "타법인주식")),
+    ("특수관계자", ("대규모내부거래", "동일인등출자계열회사", "계열회사와의",
+                   "특수관계인", "이해관계자와의")),
+    ("외부감사",   ("감사보고서", "감사인", "회계처리기준", "재무제표재작성",
+                   "외부감사", "감리")),
+    ("소송·제재",  ("소송", "제재", "과징금", "벌금", "행정처분", "조사", "고발")),
+    ("자본거래",   ("자기주식", "유상증자", "무상증자", "감자", "전환사채",
+                   "신주인수권부사채", "교환사채", "사채권", "주식매수선택권")),
+    ("배당",       ("배당",)),
+    ("정기보고서", ("사업보고서", "반기보고서", "분기보고서")),
+]
+
+
+def tag_filing(report_nm: str) -> Optional[str]:
+    """보고서명에서 감사 시사점 태그를 뽑는다. 해당 없으면 None."""
+    name = (report_nm or "").replace(" ", "")
+    for tag, keywords in FILING_TAGS:
+        if any(kw in name for kw in keywords):
+            return tag
+    return None
+
+
+def fiscal_window(today) -> tuple[str, str]:
+    """직전 회계연도 개시일 ~ 오늘. list.json 형식(YYYYMMDD)으로 돌려준다.
+
+    2026년 기말감사라면 2025-01-01 ~ 오늘이 되어, 2025년 1역년 공시와
+    2026년 기중 공시가 모두 들어온다.
+    """
+    from datetime import date as _date
+    return _date(today.year - 1, 1, 1).strftime("%Y%m%d"), today.strftime("%Y%m%d")

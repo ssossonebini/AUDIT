@@ -1,5 +1,7 @@
 """회사 등록과 재무제표 수집 흐름 검증 (DART 호출은 대역으로 대체)."""
 
+from datetime import date
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -227,11 +229,10 @@ def test_target_years_cover_this_year_and_the_prior_calendar_year():
       2025년 1역년 공시 → 2025-03 제출된 FY2024 사업보고서
     두 창을 합치면 사업연도 2024·2025 가 대상이 된다.
     """
-    from datetime import date as _date
-    assert dart_client.target_business_years(_date(2026, 8, 26)) == [2024, 2025]
+    assert dart_client.target_business_years(date(2026, 8, 26)) == [2024, 2025]
 
     # 감사연도가 바뀌면 한 해씩 밀린다
-    assert dart_client.target_business_years(_date(2027, 6, 1)) == [2025, 2026]
+    assert dart_client.target_business_years(date(2027, 6, 1)) == [2025, 2026]
 
 
 def test_target_years_still_ask_for_the_year_not_yet_filed():
@@ -240,8 +241,7 @@ def test_target_years_still_ask_for_the_year_not_yet_filed():
     그래도 요청은 한다 — 없으면 013 이 오고 빈 항목으로 기록되므로,
     제출 시점을 코드가 추측하는 것보다 안전하다.
     """
-    from datetime import date as _date
-    assert dart_client.target_business_years(_date(2026, 1, 15)) == [2024, 2025]
+    assert dart_client.target_business_years(date(2026, 1, 15)) == [2024, 2025]
 
 
 def test_collect_disclosures_gathers_every_category(client, monkeypatch):
@@ -335,3 +335,104 @@ def test_disclosure_flag_appears_on_the_company_list(client, monkeypatch):
     client.post(f"{PREFIX}/companies/{created['id']}/disclosures")
     after = client.get(f"{PREFIX}/companies").json()[0]
     assert after["has_disclosures"] is True
+
+
+# ── 공시 목록 (기중 이벤트) ────────────────────────────────────────
+
+def _filing(rcept_no, report_nm, ty="B", dt="20260821"):
+    return {"rcept_no": rcept_no, "report_nm": report_nm, "flr_nm": "삼성전자",
+            "rcept_dt": dt, "pblntf_ty": ty, "rm": ""}
+
+
+def test_fiscal_window_covers_prior_calendar_year_through_today():
+    """2026년 기말감사: 2025년 1역년 + 2026년 기중."""
+    assert dart_client.fiscal_window(date(2026, 8, 26)) == ("20250101", "20260826")
+
+
+def test_tags_match_the_report_names_dart_actually_uses():
+    t = dart_client.tag_filing
+    assert t("주요사항보고서(자기주식취득결정)") == "자본거래"
+    assert t("동일인등출자계열회사와의상품·용역거래변경") == "특수관계자"
+    assert t("주요사항보고서(회사합병결정)") == "사업결합"
+    assert t("감사보고서제출") == "외부감사"
+    assert t("반기보고서 (2026.06)") == "정기보고서"
+    assert t("기타경영사항(자율공시)") is None      # 규칙 밖은 미분류로 남긴다
+
+
+def test_collect_filings_covers_mid_year_events(client, monkeypatch):
+    """2단계(사업보고서 현황)로는 안 잡히는 기중 결정이 여기서 잡혀야 한다."""
+    created = _register(client, monkeypatch)
+    windows = []
+
+    def fake(corp_code, bgn_de, end_de, pblntf_ty=None, max_pages=20):
+        windows.append((bgn_de, end_de, pblntf_ty))
+        if pblntf_ty == "B":
+            return [_filing("202608210001", "주요사항보고서(자기주식취득결정)")]
+        if pblntf_ty == "J":
+            return [_filing("202608140002", "동일인등출자계열회사와의상품·용역거래변경", "J", "20260814")]
+        return []
+
+    monkeypatch.setattr(dart_client, "fetch_disclosure_list", fake)
+    r = client.post(f"{PREFIX}/companies/{created['id']}/filings")
+    assert r.status_code == 200, r.text
+    body = r.json()
+
+    assert body["total_rows"] == 2
+    assert body["by_tag"] == {"자본거래": 1, "특수관계자": 1}
+    # 감사 관련 네 유형을 같은 창으로 조회한다
+    assert [w[2] for w in windows] == list(dart_client.DEFAULT_PUBLIC_TYPES)
+    assert {(w[0], w[1]) for w in windows} == {dart_client.fiscal_window(date.today())}
+
+    rows = client.get(f"{PREFIX}/companies/{created['id']}/filings").json()
+    treasury = next(r for r in rows if "자기주식" in r["report_nm"])
+    assert treasury["dart_url"].endswith("rcpNo=202608210001")
+
+
+def test_same_filing_listed_under_two_types_is_stored_once(client, monkeypatch):
+    """공시 하나가 여러 유형으로 잡히기도 한다."""
+    created = _register(client, monkeypatch)
+    monkeypatch.setattr(
+        dart_client, "fetch_disclosure_list",
+        lambda *a, **k: [_filing("202608210001", "주요사항보고서(자기주식취득결정)")],
+    )
+
+    body = client.post(f"{PREFIX}/companies/{created['id']}/filings").json()
+    assert body["total_rows"] == 1, "접수번호가 같은 공시가 중복 저장됐습니다"
+
+
+def test_untagged_filings_are_kept_and_counted(client, monkeypatch):
+    """규칙에 안 걸려도 버리지 않는다 — 사람이 볼 수 있어야 한다."""
+    created = _register(client, monkeypatch)
+    monkeypatch.setattr(
+        dart_client, "fetch_disclosure_list",
+        lambda *a, **k: [_filing("1", "기타경영사항(자율공시)", "I")],
+    )
+
+    body = client.post(f"{PREFIX}/companies/{created['id']}/filings").json()
+    assert body["untagged"] == 1
+    assert len(client.get(f"{PREFIX}/companies/{created['id']}/filings").json()) == 1
+
+
+def test_filings_can_be_filtered_by_tag(client, monkeypatch):
+    created = _register(client, monkeypatch)
+    monkeypatch.setattr(dart_client, "fetch_disclosure_list", lambda *a, **k: [
+        _filing("1", "주요사항보고서(자기주식취득결정)"),
+        _filing("2", "주요사항보고서(회사합병결정)"),
+    ])
+    client.post(f"{PREFIX}/companies/{created['id']}/filings")
+
+    rows = client.get(f"{PREFIX}/companies/{created['id']}/filings",
+                      params={"tag": "사업결합"}).json()
+    assert len(rows) == 1 and "합병" in rows[0]["report_nm"]
+
+
+def test_recollecting_filings_replaces_the_previous_set(client, monkeypatch):
+    created = _register(client, monkeypatch)
+    monkeypatch.setattr(dart_client, "fetch_disclosure_list",
+                        lambda *a, **k: [_filing("1", "주요사항보고서(자기주식취득결정)")])
+
+    client.post(f"{PREFIX}/companies/{created['id']}/filings")
+    client.post(f"{PREFIX}/companies/{created['id']}/filings")
+
+    rows = client.get(f"{PREFIX}/companies/{created['id']}/filings").json()
+    assert len(rows) == 1
