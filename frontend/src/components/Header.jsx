@@ -25,6 +25,12 @@ export default function Header({ activeTab, onTabChange }) {
       {/* 탭 네비게이션 */}
       <div style={{ display: 'flex', gap: 0 }}>
         <TabButton
+          active={activeTab === 'company'}
+          onClick={() => onTabChange?.('company')}
+          label="🏢 회사 프로젝트"
+          subLabel="재무제표·분석"
+        />
+        <TabButton
           active={activeTab === 'fss'}
           onClick={() => onTabChange?.('fss')}
           label="🇰🇷 금감원 (FSS)"

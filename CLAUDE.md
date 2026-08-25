@@ -70,6 +70,7 @@ AUDIT/
 | 🇺🇸 PCAOB | `/api/v1/pcaob` | `pcaob_publications` | 영문 |
 | 🇪🇺 ESMA | `/api/v1/esma` | `esma_reports` | ECEP, 403 시 seed |
 | 📰 감사 보도자료 | `/api/v1/audit-news` | `audit_news_reports` + `crawl_history` | FSS+FSC, AI 분류 |
+| 🏢 회사 프로젝트 | `/api/v1/company` | `companies` + `financial_statements` | DART 재무제표 3개년 |
 
 ### 감사 보도자료의 증분 크롤링
 
@@ -131,7 +132,7 @@ audit.db 의 중점심사 회계이슈와 지적사례로 감사인용 카드뉴
 | # | 기능 | 내용 |
 |---|---|---|
 | 1 | 회사 프로젝트 관리 | `workspace/{연도}_{회사명}/` 폴더 자동 생성 |
-| 2 | DART 재무제표 수집 | 3개년 재무제표 + 감사 관련 공시 (아래 참조) |
+| 2 | DART 재무제표 수집 | ✅ **완료** — 3개년 재무제표. 공시 수집은 아래 2·3단계 |
 | 3 | 뉴스 크롤링 | **Google News RSS** (키 불필요). 네이버는 NCP 가입이 필요해 후순위 |
 | 4 | 분석자료 내보내기 | `00_INPUT.md` 생성 → Claude Code 진입점 |
 | 5 | PDF 일괄 다운로드 | 목록에서 한 번에 (개별 `download_pdf()` 반복) |
@@ -158,6 +159,17 @@ fnlttSinglAcntAll.json
 - 자본변동표(SCE)는 사업보고서에서도 전기·전전기 일부가 빈다. 정상이다.
 
 데이터는 2015년 이후만 제공된다.
+
+**남은 단계** — 공시 수집은 아직이다.
+
+| 단계 | 범위 | API |
+|---|---|---|
+| 2 | 정기보고서 주요정보 | `alotMatter`(배당) · `irdsSttus`(증자) · `tesstkAcqsDspsSttus`(자기주식) · `otrCprInvstmntSttus`(타법인 출자) · `hyslrChgSttus`(최대주주 변동) · 감사인·감사의견 |
+| 3 | 공시 목록 · 주요사항보고서 | `list.json` (`pblntf_ty=B` 주요사항보고, `F` 외부감사관련) · DS004 |
+
+특수관계자 거래는 API로 제공되지 않는다 — 재무제표 **주석**에 있으므로
+`document.xml` 원문 파싱이 필요하다. 타법인 출자·최대주주 현황으로 관계도만
+잡고 실제 거래는 주석을 직접 확인하는 편이 현실적이다.
 
 ### 회사별 작업폴더 구조 (계획)
 

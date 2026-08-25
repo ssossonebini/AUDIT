@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, BigInteger, String, Text, DateTime, ForeignKey
 from sqlalchemy.orm import relationship
 from datetime import datetime
 
@@ -171,3 +171,56 @@ class FssCaseReport(Base):
     def has_raw_text(self) -> bool:
         """PDF 본문 수집 여부 (분석 가능 상태 표시용)"""
         return bool(self.raw_text)
+
+
+class Company(Base):
+    """분석 대상 회사. 등록 시 workspace 폴더가 함께 만들어진다."""
+    __tablename__ = "companies"
+
+    id             = Column(Integer, primary_key=True, index=True)
+    corp_code      = Column(String, unique=True, index=True)  # DART 고유번호 8자리
+    corp_name      = Column(String, nullable=False, index=True)
+    stock_code     = Column(String)                  # 상장사만 존재
+    industry_code  = Column(String)                  # 표준산업분류 (업종별 이슈 선별용)
+    ceo_name       = Column(String)
+    fiscal_month   = Column(String)                  # 결산월 (예: "12")
+    audit_year     = Column(Integer, index=True)     # 감사 대상 연도
+    workspace_path = Column(String)                  # workspace/{연도}_{회사명}
+    created_at     = Column(DateTime, default=datetime.utcnow)
+
+    statements = relationship(
+        "FinancialStatement", back_populates="company", cascade="all, delete-orphan"
+    )
+
+    @property
+    def has_financials(self) -> bool:
+        return bool(self.statements)
+
+
+class FinancialStatement(Base):
+    """재무제표 계정 한 줄. 사업보고서 한 건이 3개년 금액을 함께 담는다."""
+    __tablename__ = "financial_statements"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    company_id = Column(Integer, ForeignKey("companies.id"), index=True)
+
+    bsns_year  = Column(Integer, index=True)   # 사업연도 (당기 기준)
+    reprt_code = Column(String)                # 11011=사업보고서
+    fs_div     = Column(String)                # CFS=연결 / OFS=개별
+    sj_div     = Column(String, index=True)    # BS/IS/CIS/CF/SCE
+    sj_nm      = Column(String)                # 재무제표명
+
+    account_id     = Column(String)            # IFRS 계정 ID (표준계정이 아니면 -표준계정미사용-)
+    account_nm     = Column(String)            # 계정명
+    account_detail = Column(String)            # 자본변동표에만 존재
+    ord            = Column(Integer)           # 표시 순서
+    currency       = Column(String)
+
+    thstrm_nm        = Column(String)          # 당기명 (예: 제 56 기)
+    thstrm_amount    = Column(BigInteger)      # 당기
+    frmtrm_amount    = Column(BigInteger)      # 전기
+    bfefrmtrm_amount = Column(BigInteger)      # 전전기 — 사업보고서에만 존재
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    company = relationship("Company", back_populates="statements")

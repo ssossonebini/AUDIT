@@ -19,15 +19,19 @@ import KasbStandardDetail from './components/KasbStandardDetail'
 import AuditNewsCrawlPanel from './components/AuditNewsCrawlPanel'
 import AuditNewsCard from './components/AuditNewsCard'
 import AuditNewsDetail from './components/AuditNewsDetail'
+import CompanyRegisterPanel from './components/CompanyRegisterPanel'
+import CompanyCard from './components/CompanyCard'
+import CompanyDetail from './components/CompanyDetail'
 import { getYears, getArticles } from './api/fss'
 import { getPcaobYears, getPcaobPublications } from './api/pcaob'
 import { getEsmaYears, getEsmaReports } from './api/esma'
 import { getFssCaseYears, getFssCases } from './api/fssCase'
 import { getKasbEffectiveYears, getKasbStandards } from './api/kasb'
 import { getAuditNewsYears, getAuditNews } from './api/auditNews'
+import { getCompanies } from './api/company'
 
 function App() {
-  const [activeTab, setActiveTab] = useState('fss') // 'fss' | 'fss-case' | 'kasb' | 'pcaob' | 'esma' | 'audit-news'
+  const [activeTab, setActiveTab] = useState('fss') // 'company' | 'fss' | 'fss-case' | 'kasb' | 'pcaob' | 'esma' | 'audit-news'
 
   return (
     <div style={{ minHeight: '100vh', background: '#f4f6f9' }}>
@@ -39,6 +43,7 @@ function App() {
         {activeTab === 'pcaob' && <PcaobView />}
         {activeTab === 'esma' && <EsmaView />}
         {activeTab === 'audit-news' && <AuditNewsView />}
+        {activeTab === 'company' && <CompanyView />}
       </main>
     </div>
   )
@@ -408,6 +413,54 @@ function AuditNewsView() {
         <div style={{ display: 'grid', gap: 16, marginTop: 20 }}>
           {items.map(item => (
             <AuditNewsCard key={item.id} item={item} onClick={() => setSelectedId(item.id)} />
+          ))}
+        </div>
+      )}
+    </>
+  )
+}
+
+/* ── 회사 프로젝트 뷰 ──────────────────────────────── */
+
+function CompanyView() {
+  const [companies, setCompanies] = useState([])
+  const [selectedId, setSelectedId] = useState(null)
+  const [loading, setLoading] = useState(false)
+
+  const loadData = useCallback(async () => {
+    setLoading(true)
+    try {
+      setCompanies(await getCompanies())
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { loadData() }, [loadData])
+
+  if (selectedId) {
+    return <CompanyDetail companyId={selectedId} onBack={() => { setSelectedId(null); loadData() }} />
+  }
+
+  return (
+    <>
+      <CompanyRegisterPanel onRegistered={loadData} />
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <h2 style={{ fontSize: 18, fontWeight: 700, color: '#1a5c2e' }}>등록된 회사</h2>
+        <span style={{ fontSize: 13, color: '#8a9ab0' }}>총 {companies.length}곳</span>
+      </div>
+
+      {loading ? <LoadingBox /> : companies.length === 0 ? (
+        <EmptyState message="위에서 회사를 검색해 등록해주세요." />
+      ) : (
+        <div style={{ display: 'grid', gap: 16, marginTop: 20 }}>
+          {companies.map(c => (
+            <CompanyCard
+              key={c.id}
+              company={c}
+              onClick={() => setSelectedId(c.id)}
+              onChanged={loadData}
+            />
           ))}
         </div>
       )}
