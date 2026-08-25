@@ -274,6 +274,7 @@ def finish(entries: list, out_dir: Path, kind: str, dry_run: bool) -> None:
     write_skill_md(out_dir.parent, kind)
 
 
+# 종류별 (스킬명, description, 본문 제목, 출처 표기 예시)
 SKILL_META = {
     "kifrs": (
         "kifrs",
@@ -282,6 +283,7 @@ SKILL_META = {
         "무엇이든 언급하면 명시적 요청이 없어도 사용할 것. 회계 판단은 지어내면 위험하므로 "
         "반드시 references/ 원문을 확인한 뒤 기준서 번호와 문단번호를 근거로 답한다.",
         "K-IFRS 기준서",
+        "K-IFRS 기준서 제1115호 문단 31",
     ),
     "audit": (
         "audit-standards",
@@ -290,12 +292,14 @@ SKILL_META = {
         "명시적 요청이 없어도 사용할 것. 반드시 references/ 원문을 확인한 뒤 "
         "기준서 번호와 문단번호를 근거로 답한다.",
         "회계감사기준",
+        "회계감사기준 제315호 문단 26",
     ),
     "kgaap": (
         "kgaap",
         "일반기업회계기준(K-GAAP) 조회·해석. 사용자가 일반기업회계기준, K-GAAP, 비상장 회계처리를 "
         "언급하면 사용할 것. 반드시 references/ 원문을 확인한 뒤 장·문단번호를 근거로 답한다.",
         "일반기업회계기준",
+        "일반기업회계기준 제16장 문단 16.10",
     ),
 }
 
@@ -308,7 +312,7 @@ def write_skill_md(skill_dir: Path, kind: str) -> None:
         print(f"   SKILL.md 는 이미 있어 건드리지 않았습니다: {path}")
         return
 
-    name, description, label = SKILL_META[kind]
+    name, description, label, citation = SKILL_META[kind]
     path.write_text(
         f"""---
 name: {name}
@@ -328,7 +332,7 @@ description: {description}
 ## 답변 규칙
 
 - 기억으로 답하지 말 것. 반드시 위 순서로 원문을 확인한다.
-- 출처를 `{label} 제1115호 문단 31` 형식으로 명시한다.
+- 출처를 `{citation}` 형식으로 명시한다.
 - 원문에서 확인하지 못한 내용은 "기준서에서 확인되지 않는다"고 밝힌다.
 - 시행일·경과규정이 있는 항목은 적용 시점을 함께 확인한다.
 - 개정 전후가 다를 수 있으므로, 어느 판본인지 불확실하면 사용자에게 확인한다.
