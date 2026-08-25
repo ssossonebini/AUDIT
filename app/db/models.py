@@ -191,10 +191,17 @@ class Company(Base):
     statements = relationship(
         "FinancialStatement", back_populates="company", cascade="all, delete-orphan"
     )
+    disclosures = relationship(
+        "DisclosureItem", back_populates="company", cascade="all, delete-orphan"
+    )
 
     @property
     def has_financials(self) -> bool:
         return bool(self.statements)
+
+    @property
+    def has_disclosures(self) -> bool:
+        return bool(self.disclosures)
 
 
 class FinancialStatement(Base):
@@ -224,3 +231,26 @@ class FinancialStatement(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     company = relationship("Company", back_populates="statements")
+
+
+class DisclosureItem(Base):
+    """정기보고서 주요정보 한 행.
+
+    배당·증자·자기주식·타법인출자·최대주주·감사의견은 응답 스키마가 제각각이라
+    항목별 테이블 대신 payload(JSON)로 보관한다. 분석은 Claude Code 가
+    payload 를 읽어 수행하므로 타입을 고정할 실익이 없다.
+    """
+    __tablename__ = "disclosure_items"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    company_id = Column(Integer, ForeignKey("companies.id"), index=True)
+
+    category   = Column(String, index=True)   # 배당 / 증자 / 자기주식 / 감사의견 ...
+    api_file   = Column(String)               # 어느 엔드포인트에서 왔는지
+    bsns_year  = Column(Integer, index=True)  # 사업연도
+    reprt_code = Column(String)               # 11011=사업보고서
+    rcept_no   = Column(String)               # 접수번호 (DART 원문 링크용)
+    payload    = Column(Text)                 # 응답 행 원본 (JSON 문자열)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    company = relationship("Company", back_populates="disclosures")

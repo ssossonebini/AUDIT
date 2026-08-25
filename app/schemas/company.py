@@ -24,6 +24,7 @@ class CompanyListItem(BaseModel):
     audit_year: Optional[int] = None
     workspace_path: Optional[str] = None
     has_financials: bool = False
+    has_disclosures: bool = False
 
     model_config = {"from_attributes": True}
 
@@ -63,4 +64,31 @@ class FinancialsSummary(BaseModel):
     """수집 결과 요약 — 연결·별도를 모두 받으므로 목록으로 돌려준다."""
     bsns_year: int
     collected: list[FinancialsCollected]
+    message: str
+
+
+class DisclosureLine(BaseModel):
+    """주요정보 한 행. payload 는 API 응답 원본을 그대로 담는다."""
+    id: int
+    category: Optional[str] = None
+    bsns_year: Optional[int] = None
+    rcept_no: Optional[str] = None
+    payload: dict = {}
+
+    model_config = {"from_attributes": True}
+
+
+class DisclosureCollected(BaseModel):
+    category: str
+    label: str
+    rows: int
+    years: list[int]
+    error: Optional[str] = None    # 이 항목만 실패했을 때의 사유
+
+
+class DisclosuresSummary(BaseModel):
+    years: list[int]
+    period: str                    # 사람이 읽는 수집기간 설명
+    collected: list[DisclosureCollected]
+    total_rows: int
     message: str

@@ -26,3 +26,14 @@ export const getFinancials = (id, { bsnsYear, fsDiv, sjDiv } = {}) => {
   if (sjDiv)    params.sj_div    = sjDiv
   return api.get(`/companies/${id}/financials`, { params }).then(r => r.data)
 }
+
+export const collectDisclosures = (id, bsnsYear) =>
+  api.post(`/companies/${id}/disclosures`, null,
+    { params: bsnsYear ? { bsns_year: bsnsYear } : {} }).then(r => r.data)
+
+export const getDisclosures = (id, { category, bsnsYear } = {}) => {
+  const params = {}
+  if (category) params.category = category
+  if (bsnsYear) params.bsns_year = bsnsYear
+  return api.get(`/companies/${id}/disclosures`, { params }).then(r => r.data)
+}

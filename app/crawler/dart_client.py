@@ -265,3 +265,43 @@ def current_amount(row: dict, cumulative: bool = True) -> Optional[int]:
         if value is not None:
             return value
     return parse_amount(row.get("thstrm_amount"))
+
+
+# ── 정기보고서 주요정보 (DS002) ────────────────────────────────────
+
+# 이 API들은 날짜 범위가 아니라 (corp_code, bsns_year, reprt_code) 로 조회한다.
+# 사업보고서에서 뽑아낸 표이므로, "어느 사업연도의 보고서인지"가 기준이 된다.
+MAJOR_INFO_APIS = {
+    "배당":        ("alotMatter.json",                "배당에 관한 사항"),
+    "증자":        ("irdsSttus.json",                 "증자(감자) 현황"),
+    "자기주식":     ("tesstkAcqsDspsSttus.json",       "자기주식 취득·처분 현황"),
+    "타법인출자":   ("otrCprInvstmntSttus.json",       "타법인 출자현황"),
+    "최대주주":     ("hyslrSttus.json",                "최대주주 현황"),
+    "최대주주변동": ("hyslrChgSttus.json",             "최대주주 변동현황"),
+    "감사의견":     ("accnutAdtorNmNdAdtOpinion.json", "회계감사인의 명칭 및 감사의견"),
+    "감사용역":     ("adtServcCnclsSttus.json",        "감사용역 체결현황"),
+}
+
+
+def fetch_major_info(
+    corp_code: str, bsns_year: int, api_file: str, reprt_code: str = REPRT_ANNUAL
+) -> list[dict]:
+    """정기보고서 주요정보 한 종류를 조회한다."""
+    data = _get(
+        api_file,
+        corp_code=corp_code,
+        bsns_year=str(bsns_year),
+        reprt_code=reprt_code,
+    )
+    return data.get("list", [])
+
+
+def target_business_years(today, back_years: int = 2) -> list[int]:
+    """직전 회계연도 개시일부터 오늘까지 공시된 사업보고서의 사업연도들.
+
+    사업보고서는 사업연도 종료 후 90일 이내에 제출되므로, 예를 들어
+    2026-08-26 기준 창(2025-01-01 ~ 2026-08-26)에는 2025년 3월경 제출된
+    2024 사업연도분과 2026년 3월경 제출된 2025 사업연도분이 들어온다.
+    """
+    latest = today.year - 1
+    return list(range(latest - back_years + 1, latest + 1))

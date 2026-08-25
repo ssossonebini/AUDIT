@@ -209,3 +209,111 @@ def test_workspace_name_is_safe_for_windows():
     assert "/" not in workspace.safe_name("A/B 주식회사")
     assert ":" not in workspace.safe_name("A:B")
     assert workspace.folder_name(2026, "삼성 전자") == "2026_삼성_전자"
+
+
+# ── 정기보고서 주요정보 ────────────────────────────────────────────
+
+def _register(client, monkeypatch, name="삼성전자", code="00126380", year=2026):
+    monkeypatch.setattr(dart_client, "fetch_company", lambda c: {"corp_name": name})
+    return client.post(f"{PREFIX}/companies",
+                       json={"corp_code": code, "audit_year": year}).json()
+
+
+def test_target_years_span_the_reports_filed_in_the_window():
+    """직전 회계연도 개시일~오늘 창에는 사업보고서 두 해분이 들어온다."""
+    from datetime import date as _date
+    assert dart_client.target_business_years(_date(2026, 8, 26)) == [2024, 2025]
+    assert dart_client.target_business_years(_date(2027, 1, 2)) == [2025, 2026]
+
+
+def test_collect_disclosures_gathers_every_category(client, monkeypatch):
+    created = _register(client, monkeypatch)
+    seen = []
+
+    def fake(corp_code, year, api_file, reprt_code=None):
+        seen.append((api_file, year))
+        return [{"rcept_no": f"2026{year}", "se": "보통주", "thstrm": "1,000"}]
+
+    monkeypatch.setattr(dart_client, "fetch_major_info", fake)
+
+    r = client.post(f"{PREFIX}/companies/{created['id']}/disclosures")
+    assert r.status_code == 200, r.text
+    body = r.json()
+
+    assert {c["category"] for c in body["collected"]} == set(dart_client.MAJOR_INFO_APIS)
+    # 항목 8종 × 사업연도 2개
+    assert len(seen) == len(dart_client.MAJOR_INFO_APIS) * 2
+    assert body["total_rows"] == len(dart_client.MAJOR_INFO_APIS) * 2
+
+
+def test_payload_keeps_the_raw_response_row(client, monkeypatch):
+    """응답 스키마가 항목마다 달라 payload 를 그대로 보관한다."""
+    created = _register(client, monkeypatch)
+    monkeypatch.setattr(dart_client, "fetch_major_info",
+                        lambda *a, **k: [{"rcept_no": "1", "stock_knd": "보통주",
+                                          "thstrm": "1,500", "frmtrm": "1,200"}])
+
+    client.post(f"{PREFIX}/companies/{created['id']}/disclosures",
+                params={"bsns_year": 2025})
+    rows = client.get(f"{PREFIX}/companies/{created['id']}/disclosures",
+                      params={"category": "배당"}).json()
+
+    assert rows[0]["payload"]["stock_knd"] == "보통주"
+    assert rows[0]["payload"]["thstrm"] == "1,500"
+
+
+def test_one_failing_category_does_not_abort_the_rest(client, monkeypatch):
+    """항목 하나가 막혀도 나머지는 모아야 한다."""
+    created = _register(client, monkeypatch)
+
+    def flaky(corp_code, year, api_file, reprt_code=None):
+        if api_file.startswith("alotMatter"):
+            raise dart_client.DartError("800")     # 시스템 점검
+        return [{"rcept_no": "1"}]
+
+    monkeypatch.setattr(dart_client, "fetch_major_info", flaky)
+    body = client.post(f"{PREFIX}/companies/{created['id']}/disclosures").json()
+
+    failed = [c for c in body["collected"] if c["error"]]
+    assert [c["category"] for c in failed] == ["배당"]
+    assert body["total_rows"] > 0, "한 항목 실패로 전체가 비면 안 된다"
+    assert "실패" in body["message"]
+
+
+def test_absent_category_is_not_treated_as_an_error(client, monkeypatch):
+    """배당을 하지 않은 회사는 013 이 온다. 오류가 아니다."""
+    created = _register(client, monkeypatch)
+
+    def none_found(corp_code, year, api_file, reprt_code=None):
+        raise dart_client.DartError("013")
+
+    monkeypatch.setattr(dart_client, "fetch_major_info", none_found)
+    body = client.post(f"{PREFIX}/companies/{created['id']}/disclosures").json()
+
+    assert body["total_rows"] == 0
+    assert all(c["error"] is None for c in body["collected"])
+
+
+def test_recollecting_replaces_rows_for_the_same_year(client, monkeypatch):
+    created = _register(client, monkeypatch)
+    monkeypatch.setattr(dart_client, "fetch_major_info",
+                        lambda *a, **k: [{"rcept_no": "1"}])
+
+    client.post(f"{PREFIX}/companies/{created['id']}/disclosures", params={"bsns_year": 2025})
+    client.post(f"{PREFIX}/companies/{created['id']}/disclosures", params={"bsns_year": 2025})
+
+    rows = client.get(f"{PREFIX}/companies/{created['id']}/disclosures").json()
+    assert len(rows) == len(dart_client.MAJOR_INFO_APIS), "재수집이 중복 적재했습니다"
+
+
+def test_disclosure_flag_appears_on_the_company_list(client, monkeypatch):
+    created = _register(client, monkeypatch)
+    monkeypatch.setattr(dart_client, "fetch_major_info",
+                        lambda *a, **k: [{"rcept_no": "1"}])
+
+    before = client.get(f"{PREFIX}/companies").json()[0]
+    assert before["has_disclosures"] is False
+
+    client.post(f"{PREFIX}/companies/{created['id']}/disclosures")
+    after = client.get(f"{PREFIX}/companies").json()[0]
+    assert after["has_disclosures"] is True

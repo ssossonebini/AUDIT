@@ -1,17 +1,17 @@
 import { useState } from 'react'
-import { collectFinancials, deleteCompany } from '../api/company'
+import { collectFinancials, collectDisclosures, deleteCompany } from '../api/company'
 
 const ACCENT = '#1a5c2e'
 
 export default function CompanyCard({ company, onClick, onChanged }) {
-  const [busy, setBusy]     = useState(null)   // 'collect' | 'delete'
+  const [busy, setBusy]     = useState(null)   // 'fs' | 'disc' | 'delete'
   const [notice, setNotice] = useState(null)
 
-  const handleCollect = async (e) => {
+  const run = (kind, fn) => async (e) => {
     e.stopPropagation()
-    setBusy('collect'); setNotice(null)
+    setBusy(kind); setNotice(null)
     try {
-      const r = await collectFinancials(company.id)
+      const r = await fn(company.id)
       setNotice({ ok: true, text: r.message })
       onChanged?.()
     } catch (err) {
@@ -20,6 +20,9 @@ export default function CompanyCard({ company, onClick, onChanged }) {
       setBusy(null)
     }
   }
+
+  const handleCollect    = run('fs', collectFinancials)
+  const handleDisclosure = run('disc', collectDisclosures)
 
   const handleDelete = async (e) => {
     e.stopPropagation()
@@ -65,7 +68,13 @@ export default function CompanyCard({ company, onClick, onChanged }) {
               company.has_financials ? '#eaf3ea' : '#fdf6f0',
               company.has_financials ? '#1a5c2e' : '#8a5a1a',
             )}>
-              {company.has_financials ? '✅ 재무제표 수집됨' : '⚠ 재무제표 미수집'}
+              {company.has_financials ? '✅ 재무제표' : '⚠ 재무제표'}
+            </span>
+            <span style={tag(
+              company.has_disclosures ? '#eaf3ea' : '#fdf6f0',
+              company.has_disclosures ? '#1a5c2e' : '#8a5a1a',
+            )}>
+              {company.has_disclosures ? '✅ 주요정보' : '⚠ 주요정보'}
             </span>
           </div>
 
@@ -85,13 +94,25 @@ export default function CompanyCard({ company, onClick, onChanged }) {
             onClick={handleCollect}
             disabled={busy !== null}
             style={{
-              background: busy === 'collect' ? '#a0b0c8' : ACCENT, color: '#fff',
+              background: busy === 'fs' ? '#a0b0c8' : ACCENT, color: '#fff',
               border: 'none', borderRadius: 6, padding: '6px 14px',
               fontSize: 12, fontWeight: 700,
               cursor: busy ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap',
             }}
           >
-            {busy === 'collect' ? '수집 중...' : '재무제표 수집'}
+            {busy === 'fs' ? '수집 중...' : '재무제표 수집'}
+          </button>
+          <button
+            onClick={handleDisclosure}
+            disabled={busy !== null}
+            style={{
+              background: busy === 'disc' ? '#a0b0c8' : '#fff', color: ACCENT,
+              border: `1px solid ${ACCENT}`, borderRadius: 6, padding: '5px 14px',
+              fontSize: 12, fontWeight: 700,
+              cursor: busy ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap',
+            }}
+          >
+            {busy === 'disc' ? '수집 중...' : '주요정보 수집'}
           </button>
           <button
             onClick={handleDelete}

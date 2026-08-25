@@ -70,7 +70,7 @@ AUDIT/
 | 🇺🇸 PCAOB | `/api/v1/pcaob` | `pcaob_publications` | 영문 |
 | 🇪🇺 ESMA | `/api/v1/esma` | `esma_reports` | ECEP, 403 시 seed |
 | 📰 감사 보도자료 | `/api/v1/audit-news` | `audit_news_reports` + `crawl_history` | FSS+FSC, AI 분류 |
-| 🏢 회사 프로젝트 | `/api/v1/company` | `companies` + `financial_statements` | DART 재무제표 3개년 |
+| 🏢 회사 프로젝트 | `/api/v1/company` | `companies` + `financial_statements` + `disclosure_items` | DART 재무제표·주요정보 |
 
 ### 감사 보도자료의 증분 크롤링
 
@@ -162,10 +162,18 @@ fnlttSinglAcntAll.json
 
 **남은 단계** — 공시 수집은 아직이다.
 
-| 단계 | 범위 | API |
+| 단계 | 범위 | 상태 |
 |---|---|---|
-| 2 | 정기보고서 주요정보 | `alotMatter`(배당) · `irdsSttus`(증자) · `tesstkAcqsDspsSttus`(자기주식) · `otrCprInvstmntSttus`(타법인 출자) · `hyslrChgSttus`(최대주주 변동) · 감사인·감사의견 |
-| 3 | 공시 목록 · 주요사항보고서 | `list.json` (`pblntf_ty=B` 주요사항보고, `F` 외부감사관련) · DS004 |
+| 2 | 정기보고서 주요정보 8종 (`dart_client.MAJOR_INFO_APIS`) | ✅ 완료 |
+| 3 | 공시 목록 · 주요사항보고서 — `list.json`(`pblntf_ty=B`,`F`) · DS004 | 미착수 |
+
+**주요정보는 날짜가 아니라 사업연도로 조회된다.** "직전 회계연도 개시일 ~ 오늘"
+이라는 수집기간은 `target_business_years()`가 사업연도로 환산한다 — 사업보고서는
+사업연도 종료 후 90일 안에 제출되므로 그 창에는 두 해분이 들어온다.
+
+항목마다 응답 컬럼이 달라 `disclosure_items.payload`(JSON 문자열)에 원본을
+그대로 담는다. 분석은 Claude Code가 payload를 읽어 수행하므로 타입을 고정할
+실익이 없다.
 
 특수관계자 거래는 API로 제공되지 않는다 — 재무제표 **주석**에 있으므로
 `document.xml` 원문 파싱이 필요하다. 타법인 출자·최대주주 현황으로 관계도만

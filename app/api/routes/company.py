@@ -1,8 +1,10 @@
 """
 회사 프로젝트 관리 + DART 재무제표 수집 API
 """
+import json
 import logging
 from collections import Counter
+from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -10,12 +12,15 @@ from sqlalchemy.orm import Session
 
 from app.core import workspace
 from app.db.database import get_db
-from app.db.models import Company, FinancialStatement
+from app.db.models import Company, DisclosureItem, FinancialStatement
 from app.schemas.company import (
     CompanyCreate,
     CompanyListItem,
     CompanySchema,
     CorpSearchResult,
+    DisclosureCollected,
+    DisclosureLine,
+    DisclosuresSummary,
     FinancialLine,
     FinancialsCollected,
     FinancialsSummary,
@@ -218,3 +223,123 @@ def _as_int(value) -> Optional[int]:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+@router.post("/companies/{company_id}/disclosures", response_model=DisclosuresSummary)
+def collect_disclosures(
+    company_id: int,
+    bsns_year: Optional[int] = None,
+    db: Session = Depends(get_db),
+):
+    """정기보고서 주요정보를 수집한다 (배당·증자·자기주식·출자·최대주주·감사의견).
+
+    수집 범위는 **직전 회계연도 개시일 ~ 오늘** 사이에 공시된 사업보고서다.
+    사업보고서는 사업연도 종료 후 90일 안에 제출되므로, 그 창에는 사업연도
+    두 해분이 들어온다 (2026-08-26 기준이면 2024·2025). 주요정보 API 자체는
+    날짜가 아니라 사업연도로 조회되므로 이렇게 환산해서 부른다.
+
+    bsns_year 를 주면 그 해만 수집한다.
+    """
+    company = db.query(Company).filter(Company.id == company_id).first()
+    if not company:
+        raise HTTPException(status_code=404, detail="회사를 찾을 수 없습니다.")
+
+    today = date.today()
+    years = [bsns_year] if bsns_year else dart_client.target_business_years(today)
+    years = [y for y in years if y >= 2015]
+    if not years:
+        raise HTTPException(
+            status_code=400, detail="DART 주요정보는 2015년 이후만 제공됩니다."
+        )
+
+    # 같은 사업연도를 다시 수집하면 교체한다
+    db.query(DisclosureItem).filter(
+        DisclosureItem.company_id == company.id,
+        DisclosureItem.bsns_year.in_(years),
+    ).delete(synchronize_session=False)
+
+    collected: list[DisclosureCollected] = []
+    total = 0
+
+    for category, (api_file, label) in dart_client.MAJOR_INFO_APIS.items():
+        rows_saved, years_with_rows, error = 0, [], None
+
+        for year in years:
+            try:
+                rows = dart_client.fetch_major_info(company.corp_code, year, api_file)
+            except dart_client.DartError as e:
+                if e.status == "013":      # 해당 연도에 그 항목이 없을 뿐이다
+                    continue
+                # 항목 하나가 실패해도 나머지는 계속 모은다
+                error = e.message
+                logger.warning(f"{label} {year} 실패: {e}")
+                break
+            except Exception as e:
+                error = str(e)
+                logger.exception(f"{label} {year} 실패")
+                break
+
+            for row in rows:
+                db.add(DisclosureItem(
+                    company_id=company.id,
+                    category=category,
+                    api_file=api_file,
+                    bsns_year=year,
+                    reprt_code=dart_client.REPRT_ANNUAL,
+                    rcept_no=row.get("rcept_no"),
+                    payload=json.dumps(row, ensure_ascii=False),
+                ))
+            if rows:
+                rows_saved += len(rows)
+                years_with_rows.append(year)
+
+        total += rows_saved
+        collected.append(DisclosureCollected(
+            category=category, label=label,
+            rows=rows_saved, years=years_with_rows, error=error,
+        ))
+
+    db.commit()
+
+    start = date(today.year - 1, 1, 1)
+    period = f"{start.isoformat()} ~ {today.isoformat()} 공시분 (사업연도 {years[0]}~{years[-1]})"
+    failed = [c.label for c in collected if c.error]
+    note = f" · 실패 {len(failed)}종({', '.join(failed)})" if failed else ""
+
+    return DisclosuresSummary(
+        years=years,
+        period=period,
+        collected=collected,
+        total_rows=total,
+        message=f"주요정보 {total}행 수집 — {period}{note}",
+    )
+
+
+@router.get("/companies/{company_id}/disclosures", response_model=list[DisclosureLine])
+def list_disclosures(
+    company_id: int,
+    category: Optional[str] = None,
+    bsns_year: Optional[int] = None,
+    db: Session = Depends(get_db),
+):
+    q = db.query(DisclosureItem).filter(DisclosureItem.company_id == company_id)
+    if category:
+        q = q.filter(DisclosureItem.category == category)
+    if bsns_year:
+        q = q.filter(DisclosureItem.bsns_year == bsns_year)
+
+    rows = q.order_by(DisclosureItem.category, DisclosureItem.bsns_year.desc()).all()
+    return [
+        DisclosureLine(
+            id=r.id, category=r.category, bsns_year=r.bsns_year,
+            rcept_no=r.rcept_no, payload=_safe_json(r.payload),
+        )
+        for r in rows
+    ]
+
+
+def _safe_json(text: Optional[str]) -> dict:
+    try:
+        return json.loads(text) if text else {}
+    except (TypeError, ValueError):
+        return {}

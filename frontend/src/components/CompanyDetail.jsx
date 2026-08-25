@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { getCompany, getFinancials } from '../api/company'
+import { getCompany, getFinancials, getDisclosures } from '../api/company'
+import DisclosurePanel from './DisclosurePanel'
 
 const ACCENT = '#1a5c2e'
 
@@ -19,14 +20,18 @@ const STATEMENTS = [
 export default function CompanyDetail({ companyId, onBack }) {
   const [company, setCompany] = useState(null)
   const [lines, setLines]     = useState([])
+  const [discRows, setDiscRows] = useState([])
+  const [section, setSection] = useState('fs')   // 'fs' | 'disc'
   const [sjDiv, setSjDiv]     = useState('BS')
   const [fsDiv, setFsDiv]     = useState('CFS')
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     setLoading(true)
-    Promise.all([getCompany(companyId), getFinancials(companyId)])
-      .then(([c, f]) => { setCompany(c); setLines(f) })
+    Promise.all([
+      getCompany(companyId), getFinancials(companyId), getDisclosures(companyId),
+    ])
+      .then(([c, f, d]) => { setCompany(c); setLines(f); setDiscRows(d) })
       .finally(() => setLoading(false))
   }, [companyId])
 
@@ -69,7 +74,30 @@ export default function CompanyDetail({ companyId, onBack }) {
           </tbody>
         </table>
 
-        {lines.length === 0 ? (
+        {/* 재무제표 / 주요정보 */}
+        <div style={{ display: 'flex', gap: 0, marginBottom: 16, borderBottom: '1px solid #dde2ea' }}>
+          {[
+            { key: 'fs',   label: '재무제표',  count: lines.length },
+            { key: 'disc', label: '주요정보',  count: discRows.length },
+          ].map(t => (
+            <button
+              key={t.key}
+              onClick={() => setSection(t.key)}
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                padding: '8px 18px', fontSize: 14,
+                fontWeight: section === t.key ? 700 : 400,
+                color: section === t.key ? ACCENT : '#8a9ab0',
+                borderBottom: section === t.key ? `2px solid ${ACCENT}` : '2px solid transparent',
+                marginBottom: -1,
+              }}
+            >
+              {t.label} <span style={{ fontSize: 12, opacity: 0.8 }}>{t.count}</span>
+            </button>
+          ))}
+        </div>
+
+        {section === 'disc' ? <DisclosurePanel rows={discRows} /> : lines.length === 0 ? (
           <div style={{
             padding: '14px 18px', background: '#fdf6f0', border: '1px solid #f0dcc8',
             borderRadius: 8, fontSize: 13, color: '#8a5a1a',
