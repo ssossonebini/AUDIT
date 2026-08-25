@@ -43,6 +43,14 @@ PATTERNS = {
 # 직전 절 시작점에서 이만큼은 지나야 새 절로 인정한다.
 MIN_SECTION_CHARS = 1500
 
+# --mode file 용. PDF 하나가 기준서 하나일 때 파일명에서 번호·제목을 뽑는다.
+#   시행중_K-IFRS_제1001호_재무제표_표시(2023_개정_...).pdf → ("1001", "재무제표_표시")
+FILENAME_PATTERNS = {
+    "kifrs": re.compile(r"제\s*(\d{4})\s*호[_\s]*(.*?)(?:\(|$)"),
+    "audit": re.compile(r"제?\s*(\d{3,4})\s*호[_\s]*(.*?)(?:\(|$)"),
+    "kgaap": re.compile(r"제\s*(\d{1,2})\s*장[_\s]*(.*?)(?:\(|$)"),
+}
+
 
 def extract_pages(pdf_path: Path) -> list[str]:
     pages = []
@@ -94,6 +102,63 @@ def slugify(number: str, title: str, prefix: str) -> str:
     return f"{prefix}_{number}" + (f"_{safe}" if safe else "") + ".md"
 
 
+def parse_filename(stem: str, kind: str) -> tuple[str, str]:
+    """파일명에서 (번호, 제목)을 뽑는다. 번호가 없으면 ('', 정리된 파일명)."""
+    m = FILENAME_PATTERNS[kind].search(stem)
+    if m:
+        title = re.sub(r"[_\s]+", " ", m.group(2)).strip(" _-")
+        return m.group(1), title
+
+    # 개념체계·실무서처럼 번호가 없는 문서
+    head = stem.split("(")[0]
+    head = re.sub(r"^(시행중|시행예정)[_\s]*", "", head)
+    head = re.sub(r"^K-?IFRS[_\s]*", "", head, flags=re.I)
+    return "", re.sub(r"[_\s]+", " ", head).strip(" _-")
+
+
+def build_by_filename(pdf_paths: list[Path], kind: str, out_dir: Path, dry_run: bool) -> None:
+    """PDF 하나 = 기준서 하나. 분할하지 않고 1:1로 변환한다."""
+    prefix = kind
+    entries = []
+    used: set[str] = set()
+
+    for pdf_path in pdf_paths:
+        number, title = parse_filename(pdf_path.stem, kind)
+
+        if number:
+            fname = slugify(number, title, prefix)
+        else:
+            safe = re.sub(r"[^\w가-힣]+", "_", title).strip("_")[:40]
+            fname = f"{prefix}_{safe or pdf_path.stem[:40]}.md"
+
+        # 번호가 같은 판본이 둘 이상이어도 덮어쓰지 않는다
+        if fname in used:
+            stem = fname[:-3]
+            n = 2
+            while f"{stem}_{n}.md" in used:
+                n += 1
+            fname = f"{stem}_{n}.md"
+        used.add(fname)
+
+        pages = strip_running_heads(extract_pages(pdf_path))
+        text = "\n".join(pages).strip()
+
+        if not text:
+            print(f"  ⚠️ {pdf_path.name}\n     텍스트 추출 실패 (스캔본 가능성)")
+            continue
+
+        label = f"{number}호 {title}" if number else title
+        print(f"  {fname:<46} {len(text):>9,}자   ← {label}")
+        entries.append((number or "zz", title, fname, len(text)))
+
+        if not dry_run:
+            out_dir.mkdir(parents=True, exist_ok=True)
+            header = f"# {label}\n\n> 출처: {pdf_path.name}\n\n---\n\n"
+            (out_dir / fname).write_text(header + text, encoding="utf-8")
+
+    finish(entries, out_dir, kind, dry_run)
+
+
 def build(pdf_paths: list[Path], kind: str, out_dir: Path, dry_run: bool) -> None:
     pattern = PATTERNS[kind]
     prefix = {"kifrs": "kifrs", "audit": "audit", "kgaap": "kgaap"}[kind]
@@ -127,6 +192,11 @@ def build(pdf_paths: list[Path], kind: str, out_dir: Path, dry_run: bool) -> Non
                 header = f"# {title or number}\n\n> 출처: {pdf_path.name}\n\n---\n\n"
                 (out_dir / fname).write_text(header + body, encoding="utf-8")
 
+    finish(entries, out_dir, kind, dry_run)
+
+
+def finish(entries: list, out_dir: Path, kind: str, dry_run: bool) -> None:
+    """INDEX.md 와 SKILL.md 를 만든다 (두 모드 공통)."""
     if dry_run:
         print("\n[dry-run] 파일을 쓰지 않았습니다. 결과가 맞으면 --dry-run 을 빼고 다시 실행하세요.")
         return
@@ -145,8 +215,10 @@ def build(pdf_paths: list[Path], kind: str, out_dir: Path, dry_run: bool) -> Non
         "|---|---|---|---|",
     ]
     for number, title, fname, size in sorted(entries):
-        lines.append(f"| {number} | {title} | `{fname}` | {size:,}자 |")
+        shown = "" if number == "zz" else number
+        lines.append(f"| {shown} | {title} | `{fname}` | {size:,}자 |")
 
+    out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "INDEX.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"\n✅ {len(entries)}개 파일 + INDEX.md 생성 → {out_dir}")
 
@@ -226,8 +298,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--pdf", required=True, help="PDF 파일 또는 폴더 경로")
     ap.add_argument("--type", required=True, choices=list(PATTERNS))
+    ap.add_argument(
+        "--mode", choices=["file", "split"], default="file",
+        help="file: PDF 하나가 기준서 하나 (기본) / split: 한 PDF 안에 여러 기준서",
+    )
     ap.add_argument("--out", help="references 폴더 (dry-run 이 아니면 필수)")
-    ap.add_argument("--dry-run", action="store_true", help="분할 결과만 확인")
+    ap.add_argument("--dry-run", action="store_true", help="결과만 확인, 파일은 쓰지 않음")
     args = ap.parse_args()
 
     src = Path(args.pdf)
@@ -238,7 +314,13 @@ def main():
     if not args.dry_run and not args.out:
         sys.exit("--out 을 지정하거나 --dry-run 으로 먼저 확인하세요.")
 
-    build(pdfs, args.type, Path(args.out) if args.out else Path("."), args.dry_run)
+    out = Path(args.out) if args.out else Path(".")
+    print(f"{len(pdfs)}개 PDF · mode={args.mode}")
+
+    if args.mode == "file":
+        build_by_filename(pdfs, args.type, out, args.dry_run)
+    else:
+        build(pdfs, args.type, out, args.dry_run)
 
 
 if __name__ == "__main__":

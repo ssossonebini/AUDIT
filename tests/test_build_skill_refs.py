@@ -73,3 +73,41 @@ def test_slugify_builds_safe_filenames():
     assert name.startswith("kifrs_1115_")
     assert name.endswith(".md")
     assert "/" not in name and " " not in name
+
+
+# ── --mode file: PDF 하나가 기준서 하나인 경우 ────────────────────
+
+def test_parse_filename_extracts_number_and_title():
+    num, title = bsr.parse_filename(
+        "시행중_K-IFRS_제1115호_고객과의_계약에서_생기는_수익"
+        "(2018_개정_2021_타기준서_제정_수정목록_23-1_2020_구성양식_변경_반영)",
+        "kifrs",
+    )
+    assert num == "1115"
+    assert title == "고객과의 계약에서 생기는 수익"
+
+
+def test_parse_filename_drops_revision_parenthetical():
+    """괄호 안 개정 이력이 제목에 섞이면 파일명이 지저분해진다."""
+    _, title = bsr.parse_filename(
+        "시행중_K-IFRS_제1002호_재고자산(2007_제정_2017_타기준서_제정_수정목록_23-1)",
+        "kifrs",
+    )
+    assert title == "재고자산"
+    assert "2007" not in title
+
+
+def test_parse_filename_handles_documents_without_a_number():
+    """개념체계·실무서는 번호가 없다. 접두사만 걷어내고 제목을 남긴다."""
+    num, title = bsr.parse_filename(
+        "시행중_K-IFRS_재무보고를_위한_개념체계(2018_개정_2019_타기준서_개정)",
+        "kifrs",
+    )
+    assert num == ""
+    assert title == "재무보고를 위한 개념체계"
+
+
+def test_parse_filename_for_audit_standards():
+    num, title = bsr.parse_filename("감사기준서_제315호_위험평가(2023_개정)", "audit")
+    assert num == "315"
+    assert title == "위험평가"
