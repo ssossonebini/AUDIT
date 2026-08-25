@@ -32,8 +32,14 @@ htmlcov/
 Thumbs.db
 
 # Database
+# audit.db* 는 사본·복구 파일까지 함께 막는다 (audit.db.bak, audit.db.damaged,
+# audit.db.damaged.carved.json 등). *.db 만으로는 확장자가 다른 사본이 새어나간다.
 *.db
 *.db-journal
+*.db-wal
+*.db-shm
+audit.db*
+*.bak
 
 # Downloaded PDFs
 downloads/
