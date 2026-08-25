@@ -1,5 +1,6 @@
 """회사 등록과 재무제표 수집 흐름 검증 (DART 호출은 대역으로 대체)."""
 
+import pathlib
 from datetime import date
 
 import pytest
@@ -13,8 +14,23 @@ from app.main import app
 PREFIX = "/api/v1/company"
 
 
+def _refuse_to_touch_the_real_db():
+    """drop_all 을 부르기 전에 대상이 실제 DB가 아닌지 확인한다.
+
+    conftest.py 가 임시 DB로 돌려놓지만, 그것 하나에 기대지 않는다.
+    한 번 실수로 수집 데이터를 전부 날린 적이 있다.
+    """
+    from app.db.database import DEFAULT_DATABASE_URL
+
+    target = pathlib.Path(str(engine.url).replace("sqlite:///", "")).resolve()
+    real = pathlib.Path(DEFAULT_DATABASE_URL.replace("sqlite:///", "")).resolve()
+    if target == real:
+        raise RuntimeError(f"실제 DB를 지우려 했습니다: {target}")
+
+
 @pytest.fixture(autouse=True)
 def fresh_db_and_workspace(tmp_path, monkeypatch):
+    _refuse_to_touch_the_real_db()
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
     monkeypatch.setattr(workspace, "WORKSPACE_ROOT", tmp_path / "workspace")
