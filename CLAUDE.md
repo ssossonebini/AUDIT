@@ -131,9 +131,33 @@ audit.db 의 중점심사 회계이슈와 지적사례로 감사인용 카드뉴
 | # | 기능 | 내용 |
 |---|---|---|
 | 1 | 회사 프로젝트 관리 | `workspace/{연도}_{회사명}/` 폴더 자동 생성 |
-| 2 | 뉴스 크롤링 | 네이버 검색 API 주력 + Google News RSS 보조 |
-| 3 | PDF 일괄 다운로드 | 목록에서 한 번에 (개별 `download_pdf()` 반복) |
+| 2 | DART 재무제표 수집 | 3개년 재무제표 + 감사 관련 공시 (아래 참조) |
+| 3 | 뉴스 크롤링 | **Google News RSS** (키 불필요). 네이버는 NCP 가입이 필요해 후순위 |
 | 4 | 분석자료 내보내기 | `00_INPUT.md` 생성 → Claude Code 진입점 |
+| 5 | PDF 일괄 다운로드 | 목록에서 한 번에 (개별 `download_pdf()` 반복) |
+
+### OPEN DART 연동 — 검증 완료된 사실
+
+`DART_API_KEY`는 `.env`에서 읽는다 (`app/core/config.py`).
+
+**3개년 재무제표는 사업보고서 1회 호출로 끝난다.**
+
+```
+fnlttSinglAcntAll.json
+  corp_code, bsns_year, reprt_code=11011(사업보고서), fs_div=CFS|OFS(필수)
+  → thstrm_amount(당기) · frmtrm_amount(전기) · bfefrmtrm_amount(전전기)
+```
+
+연도별로 3회 호출할 필요가 없다. 다만 다음 네 가지를 지켜야 한다.
+
+- `bfefrmtrm_*`는 **사업보고서에만** 나온다. 분기·반기(11013/11012/11014)에는
+  키 자체가 없으므로 `it.get("bfefrmtrm_amount", "")`로 접근한다 (`[]`는 KeyError).
+- 분기 손익계산서는 `frmtrm_amount`가 아니라 `frmtrm_q_amount`를 쓴다.
+  `sj_div`(BS/IS/CIS/CF/SCE)별로 읽을 필드가 다르다.
+- 분기 IS/CIS의 `thstrm_amount`는 3개월 금액이다. 누적은 `thstrm_add_amount`.
+- 자본변동표(SCE)는 사업보고서에서도 전기·전전기 일부가 빈다. 정상이다.
+
+데이터는 2015년 이후만 제공된다.
 
 ### 회사별 작업폴더 구조 (계획)
 
