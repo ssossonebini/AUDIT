@@ -111,3 +111,73 @@ def test_parse_filename_for_audit_standards():
     num, title = bsr.parse_filename("감사기준서_제315호_위험평가(2023_개정)", "audit")
     assert num == "315"
     assert title == "위험평가"
+
+
+def test_running_head_on_every_page_yields_one_section():
+    """전문 PDF 는 페이지마다 기준서명이 반복된다. 절은 여전히 하나여야 한다.
+
+    페이지가 MIN_SECTION_CHARS 보다 길어도 마찬가지다 — 실제 회계감사기준 전문에서
+    이 때문에 39개 기준서가 496개 조각으로 쪼개지고 서로 덮어썼다.
+    """
+    page = "감사기준서 315 중요왜곡표시위험의 식별과 평가 목차\n" + _body("315", 60)
+    text = "\n".join([page] * 20)
+
+    found = bsr.find_sections(text, bsr.PATTERNS["audit"])
+    assert [n for _, n, _ in found] == ["315"]
+
+
+def test_table_of_contents_entry_does_not_win_over_the_body():
+    """목차에 한 번 나온 번호가 본문 구간을 밀어내면 안 된다."""
+    text = (
+        "감사기준서 580 서면진술 ..... 500\n"        # 목차 줄
+        + _body("머리", 40) + "\n"
+        + "\n".join(
+            ["감사기준서 580 서면진술 목차\n" + _body("580", 40)] * 6
+        )
+    )
+    found = bsr.find_sections(text, bsr.PATTERNS["audit"])
+
+    assert len(found) == 1
+    start = found[0][0]
+    assert "머리" not in text[start:], "목차 줄을 본문 시작으로 잡았습니다"
+    assert text[start:].startswith("감사기준서 580 서면진술 목차")
+
+
+def test_cross_reference_digits_are_not_read_as_standard_numbers():
+    """'감사기준서 500 8은 ...' 이 추출 과정에서 '5008' 로 붙어 나온다."""
+    text = (
+        "감사기준서 5008 은 경영진측 전문가의 적격성을 다룬다\n" + _body("x") + "\n"
+        "감사기준서 8004 은 재무제표가 특정목적체계에 따라 작성된 경우\n" + _body("y") + "\n"
+        "감사기준서 5305 은 테스트 범위에 대한 지침을 준다\n" + _body("z")
+    )
+    assert bsr.find_sections(text, bsr.PATTERNS["audit"]) == []
+
+
+def test_four_digit_standard_numbers_still_match():
+    text = "감사기준서 1100 내부회계관리제도의 감사 목차\n" + _body("1100", 40)
+    found = bsr.find_sections(text, bsr.PATTERNS["audit"])
+    assert [n for _, n, _ in found] == ["1100"]
+
+
+def test_section_starts_at_the_title_page_not_the_early_running_head():
+    """머리말이 한 페이지 일찍 바뀌는 판본이 있다 (600호 부록 끝장에 610호 머리말)."""
+    text = (
+        "감사기준서 610 ‘내부감사인이 수행한 업무의 활용’\n"   # 앞 기준서 부록 페이지
+        + _body("600부록", 30) + "\n"
+        "감사기준서 610 내부감사인이 수행한 업무의 활용\n목차\n문단번호\n"  # 진짜 표제
+        + "\n".join(
+            ["감사기준서 610 ‘내부감사인이 수행한 업무의 활용’\n" + _body("610", 30)] * 4
+        )
+    )
+    found = bsr.find_sections(text, bsr.PATTERNS["audit"])
+
+    assert len(found) == 1
+    start = found[0][0]
+    assert "목차" in text[start:start + bsr.TOC_LOOKAHEAD]
+    assert "600부록" not in text[start:]
+
+
+def test_opening_quote_is_not_kept_in_the_title():
+    text = "감사기준서 610 ‘내부감사인이 수행한 업무의 활용’ 목차\n" + _body("610", 40)
+    found = bsr.find_sections(text, bsr.PATTERNS["audit"])
+    assert found[0][2].startswith("내부감사인")

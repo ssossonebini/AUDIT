@@ -26,15 +26,18 @@ import pdfplumber  # noqa: E402
 # 기준서 시작 줄을 찾는 패턴. (번호, 제목) 두 그룹을 잡는다.
 PATTERNS = {
     "kifrs": re.compile(
-        r"^\s*(?:기업회계)?기준서\s*제?\s*(\d{4})\s*호\s*[’'\"「]?\s*([^\n」’'\"]{0,40})",
+        r"^\s*(?:기업회계)?기준서\s*제?\s*(\d{4})\s*호\s*[’‘\"“”'「『]?\s*([^\n」』’‘\"“”']{0,40})",
         re.M,
     ),
     "audit": re.compile(
-        r"^\s*(?:회계)?감사기준서\s*제?\s*(\d{3,4})\s*호?\s*[’'\"「]?\s*([^\n」’'\"]{0,40})",
+        # 상호참조가 PDF 추출에서 "감사기준서 5008 은 ..." 처럼 붙어 나오므로
+        # (1) 번호 뒤에 `호` 나 공백을 요구하고 (2) 4자리는 1000~4999 로 제한한다.
+        # 실재하는 감사기준서 번호는 3자리(200~810) 아니면 1100·1200·2400 대다.
+        r"^\s*(?:회계)?감사기준서\s*제?\s*([1-4]\d{3}|\d{3})(?:\s*호|\s)\s*[’‘\"“”'「『]?\s*([^\n」』’‘\"“”']{0,40})",
         re.M,
     ),
     "kgaap": re.compile(
-        r"^\s*제\s*(\d{1,2})\s*장\s*[’'\"「]?\s*([^\n」’'\"]{0,40})",
+        r"^\s*제\s*(\d{1,2})\s*장\s*[’‘\"“”'「『]?\s*([^\n」』’‘\"“”']{0,40})",
         re.M,
     ),
 }
@@ -84,17 +87,58 @@ def strip_running_heads(pages: list[str]) -> list[str]:
     return cleaned
 
 
+# 표제 페이지는 곧바로 목차가 이어진다. 머리말이 한 페이지 일찍 바뀌는 판본이
+# 있어(600호 부록 마지막 장에 610호 머리말이 붙는 식), 구간 앞쪽 매치 중
+# 목차가 따라오는 위치를 실제 시작점으로 고른다.
+TOC_LOOKAHEAD = 120
+TOC_CANDIDATES = 3
+
+
+def _section_start(text: str, positions: list[int]) -> int:
+    for pos in positions[:TOC_CANDIDATES]:
+        if "목차" in text[pos:pos + TOC_LOOKAHEAD]:
+            return pos
+    return positions[0]
+
+
 def find_sections(text: str, pattern: re.Pattern) -> list[tuple[int, str, str]]:
-    """(시작위치, 번호, 제목) 목록. 너무 가까운 중복 매치는 버린다."""
-    sections = []
+    """(시작위치, 번호, 제목) 목록.
+
+    전문(全文) PDF 는 기준서명이 매 페이지 머리말로 반복되므로 매치를 그대로 세면
+    기준서 하나가 페이지 수만큼 쪼개진다. 그래서 세 단계로 걸러낸다.
+
+    1. 같은 번호가 연달아 나오는 매치는 한 구간으로 묶는다 (머리말 반복).
+    2. 번호마다 매치가 가장 많은 구간만 본문으로 인정한다 — 목차나 상호참조는
+       한두 번만 나오므로 자연히 탈락한다. 수가 같으면 뒤쪽을 택한다 (목차가 앞).
+    3. 구간 안에서 목차가 뒤따르는 위치를 표제로 보고 시작점을 맞춘다.
+    """
+    groups: list[list] = []            # [시작위치, 번호, 제목, 매치수, 매치위치들]
     for m in pattern.finditer(text):
-        pos = m.start()
-        if sections and pos - sections[-1][0] < MIN_SECTION_CHARS:
-            continue
         number = m.group(1)
         title = re.sub(r"\s+", " ", m.group(2)).strip(" ·-–—")
-        sections.append((pos, number, title))
-    return sections
+
+        if groups and groups[-1][1] == number:
+            groups[-1][3] += 1
+            groups[-1][4].append(m.start())
+            if not groups[-1][2]:      # 머리말이 제목을 더 온전히 담기도 한다
+                groups[-1][2] = title
+            continue
+
+        # 서로 다른 번호라도 지나치게 붙어 있으면 목차 줄로 보고 흘려보낸다
+        if groups and m.start() - groups[-1][0] < MIN_SECTION_CHARS and groups[-1][3] > 1:
+            continue
+
+        groups.append([m.start(), number, title, 1, [m.start()]])
+
+    best: dict[str, list] = {}
+    for g in groups:
+        if g[1] not in best or g[3] >= best[g[1]][3]:
+            best[g[1]] = g
+
+    sections = []
+    for _, number, title, _, positions in sorted(best.values()):
+        sections.append((_section_start(text, positions), number, title))
+    return sorted(sections)
 
 
 def slugify(number: str, title: str, prefix: str) -> str:
@@ -214,7 +258,12 @@ def finish(entries: list, out_dir: Path, kind: str, dry_run: bool) -> None:
         "| 번호 | 제목 | 파일 | 분량 |",
         "|---|---|---|---|",
     ]
-    for number, title, fname, size in sorted(entries):
+    def order(entry):
+        number = entry[0]
+        # 문자열로 정렬하면 1100 이 200 앞에 온다. 번호 없는 문서는 맨 뒤로.
+        return (0, int(number), "") if number.isdigit() else (1, 0, entry[1])
+
+    for number, title, fname, size in sorted(entries, key=order):
         shown = "" if number == "zz" else number
         lines.append(f"| {shown} | {title} | `{fname}` | {size:,}자 |")
 
@@ -295,6 +344,11 @@ description: {description}
 
 
 def main():
+    # Windows 기본 콘솔은 cp949 라서 ✅·⚠️ 같은 문자에서 죽는다.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
     ap = argparse.ArgumentParser()
     ap.add_argument("--pdf", required=True, help="PDF 파일 또는 폴더 경로")
     ap.add_argument("--type", required=True, choices=list(PATTERNS))
