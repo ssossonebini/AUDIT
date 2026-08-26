@@ -70,7 +70,7 @@ AUDIT/
 | 🇺🇸 PCAOB | `/api/v1/pcaob` | `pcaob_publications` | 영문 |
 | 🇪🇺 ESMA | `/api/v1/esma` | `esma_reports` | ECEP, 403 시 seed |
 | 📰 감사 보도자료 | `/api/v1/audit-news` | `audit_news_reports` + `crawl_history` | FSS+FSC, AI 분류 |
-| 🏢 회사 프로젝트 | `/api/v1/company` | `companies` + `financial_statements` + `disclosure_items` | DART 재무제표·주요정보 |
+| 🏢 회사 프로젝트 | `/api/v1/company` | `companies` + `financial_statements` + `disclosure_items` + `disclosure_filings` + `company_news` | DART 재무제표·공시 + 뉴스 |
 
 ### 감사 보도자료의 증분 크롤링
 
@@ -140,7 +140,7 @@ audit.db 의 중점심사 회계이슈와 지적사례로 감사인용 카드뉴
 |---|---|---|
 | 1 | 회사 프로젝트 관리 | `workspace/{연도}_{회사명}/` 폴더 자동 생성 |
 | 2 | DART 재무제표 수집 | ✅ **완료** — 3개년 재무제표. 공시 수집은 아래 2·3단계 |
-| 3 | 뉴스 크롤링 | **Google News RSS** (키 불필요). 네이버는 NCP 가입이 필요해 후순위 |
+| 3 | 뉴스 크롤링 | ✅ **완료** — Google News RSS (키 불필요) |
 | 4 | 분석자료 내보내기 | `00_INPUT.md` 생성 → Claude Code 진입점 |
 | 5 | PDF 일괄 다운로드 | 목록에서 한 번에 (개별 `download_pdf()` 반복) |
 
@@ -212,9 +212,16 @@ workspace/2026_삼성전자/
 └── 04_output/           # 분석결과 · 카드뉴스
 ```
 
-### 뉴스 분류 태그 (계획)
+### 뉴스 수집 (Google News RSS)
 
-감사 어서션과 직결되도록 4분류한다.
+키가 필요 없다. 다만 한 질의당 약 100건이 상한이라 `QUERY_ANGLES` 로 갈래를
+나눠 던지고 제목으로 중복을 제거한다. `link` 는 news.google.com 리디렉션
+주소이므로 언론사명은 `<source>` 태그에서 따로 읽는다.
+
+주가·시황 기사는 `NOISE_KEYWORDS` 로 AI 호출 전에 쳐낸다. 수집 창은 공시와
+같은 `fiscal_window()` 다.
+
+**감사 어서션과 직결되도록 4분류한다.**
 
 | 태그 | 감사 시사점 |
 |---|---|

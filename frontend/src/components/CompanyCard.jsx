@@ -1,5 +1,7 @@
 import { useState } from 'react'
-import { collectFinancials, collectDisclosures, collectFilings, deleteCompany } from '../api/company'
+import {
+  collectFinancials, collectDisclosures, collectFilings, collectNews, deleteCompany,
+} from '../api/company'
 
 const ACCENT = '#1a5c2e'
 
@@ -24,6 +26,7 @@ export default function CompanyCard({ company, onClick, onChanged }) {
   const handleCollect    = run('fs', collectFinancials)
   const handleDisclosure = run('disc', collectDisclosures)
   const handleFilings    = run('filing', collectFilings)
+  const handleNews       = run('news', collectNews)
 
   const handleDelete = async (e) => {
     e.stopPropagation()
@@ -83,6 +86,12 @@ export default function CompanyCard({ company, onClick, onChanged }) {
             )}>
               {company.has_filings ? '✅ 공시' : '⚠ 공시'}
             </span>
+            <span style={tag(
+              company.has_news ? '#eaf3ea' : '#fdf6f0',
+              company.has_news ? '#1a5c2e' : '#8a5a1a',
+            )}>
+              {company.has_news ? '✅ 뉴스' : '⚠ 뉴스'}
+            </span>
           </div>
 
           <div style={{ fontWeight: 700, fontSize: 16, color: '#222', marginBottom: 4 }}>
@@ -132,6 +141,18 @@ export default function CompanyCard({ company, onClick, onChanged }) {
             }}
           >
             {busy === 'filing' ? '수집 중...' : '공시 수집'}
+          </button>
+          <button
+            onClick={handleNews}
+            disabled={busy !== null}
+            style={{
+              background: busy === 'news' ? '#a0b0c8' : '#fff', color: ACCENT,
+              border: `1px solid ${ACCENT}`, borderRadius: 6, padding: '5px 14px',
+              fontSize: 12, fontWeight: 700,
+              cursor: busy ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap',
+            }}
+          >
+            {busy === 'news' ? '수집 중...' : '뉴스 수집'}
           </button>
           <button
             onClick={handleDelete}

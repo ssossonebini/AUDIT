@@ -197,6 +197,9 @@ class Company(Base):
     filings = relationship(
         "DisclosureFiling", back_populates="company", cascade="all, delete-orphan"
     )
+    news = relationship(
+        "CompanyNews", back_populates="company", cascade="all, delete-orphan"
+    )
 
     @property
     def has_financials(self) -> bool:
@@ -209,6 +212,10 @@ class Company(Base):
     @property
     def has_filings(self) -> bool:
         return bool(self.filings)
+
+    @property
+    def has_news(self) -> bool:
+        return bool(self.news)
 
 
 class FinancialStatement(Base):
@@ -289,3 +296,26 @@ class DisclosureFiling(Base):
     @property
     def dart_url(self) -> str:
         return f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={self.rcept_no}"
+
+
+class CompanyNews(Base):
+    """회사 관련 뉴스 한 건 (Google News RSS).
+
+    감사 어서션과 이어지도록 4분류로 태깅한다 — 산업·업황 / 재무·실적 /
+    사업구조 변동 / 리스크. 분류에 걸리지 않은 기사도 버리지 않고 남긴다.
+    """
+    __tablename__ = "company_news"
+
+    id           = Column(Integer, primary_key=True, index=True)
+    company_id   = Column(Integer, ForeignKey("companies.id"), index=True)
+
+    title        = Column(String, nullable=False)
+    url          = Column(String)
+    source       = Column(String)                 # 언론사
+    published_at = Column(String, index=True)     # YYYY-MM-DD
+    tag          = Column(String, index=True)     # 4분류, 미분류면 None
+    ai_reason    = Column(Text)                   # 분류 근거 한 줄
+    query        = Column(String)                 # 어느 질의로 걸렸는지
+    created_at   = Column(DateTime, default=datetime.utcnow)
+
+    company = relationship("Company", back_populates="news")

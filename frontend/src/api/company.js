@@ -48,3 +48,9 @@ export const getFilings = (id, { tag, pblntfTy } = {}) => {
   if (pblntfTy) params.pblntf_ty = pblntfTy
   return api.get(`/companies/${id}/filings`, { params }).then(r => r.data)
 }
+
+export const collectNews = (id) =>
+  api.post(`/companies/${id}/news`).then(r => r.data)
+
+export const getNews = (id, { tag } = {}) =>
+  api.get(`/companies/${id}/news`, { params: tag ? { tag } : {} }).then(r => r.data)

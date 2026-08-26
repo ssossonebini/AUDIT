@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from app.core import workspace
 from app.db.database import get_db
 from app.db.models import (
-    Company, DisclosureFiling, DisclosureItem, FinancialStatement,
+    Company, CompanyNews, DisclosureFiling, DisclosureItem, FinancialStatement,
 )
 from app.schemas.company import (
     CompanyCreate,
@@ -28,8 +28,11 @@ from app.schemas.company import (
     FinancialLine,
     FinancialsCollected,
     FinancialsSummary,
+    NewsLine,
+    NewsSummary,
 )
-from app.crawler import dart_client
+from app.core.config import settings
+from app.crawler import dart_client, news_scraper
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -454,3 +457,90 @@ def list_filings(
         )
         for r in rows
     ]
+
+
+@router.post("/companies/{company_id}/news", response_model=NewsSummary)
+def collect_news(company_id: int, db: Session = Depends(get_db)):
+    """회사 뉴스를 수집하고 감사 어서션 4분류로 태깅한다.
+
+    수집 창은 공시와 같다 — 직전 회계연도 개시일 ~ 오늘.
+    ANTHROPIC_API_KEY 가 없으면 태깅 없이 목록만 저장한다.
+    """
+    company = db.query(Company).filter(Company.id == company_id).first()
+    if not company:
+        raise HTTPException(status_code=404, detail="회사를 찾을 수 없습니다.")
+
+    today = date.today()
+    bgn_raw, end_raw = dart_client.fiscal_window(today)
+    bgn = f"{bgn_raw[:4]}-{bgn_raw[4:6]}-{bgn_raw[6:]}"
+    end = f"{end_raw[:4]}-{end_raw[4:6]}-{end_raw[6:]}"
+
+    try:
+        items = news_scraper.collect(company.corp_name, bgn, end)
+    except Exception as e:
+        logger.exception("뉴스 수집 실패")
+        raise HTTPException(status_code=502, detail=f"뉴스 수집 실패: {e}")
+
+    if not items:
+        raise HTTPException(
+            status_code=404,
+            detail="수집된 뉴스가 없습니다. 회사명이 정확한지 확인해주세요.",
+        )
+
+    db.query(CompanyNews).filter(
+        CompanyNews.company_id == company.id
+    ).delete(synchronize_session=False)
+
+    api_key = settings.ANTHROPIC_API_KEY
+    by_tag: Counter = Counter()
+    untagged = 0
+
+    for item in items:
+        tag, reason = None, ""
+        if api_key:
+            result = news_scraper.classify(item["title"], company.corp_name, api_key)
+            tag, reason = result["tag"], result["reason"]
+
+        if tag:
+            by_tag[tag] += 1
+        else:
+            untagged += 1
+
+        db.add(CompanyNews(
+            company_id=company.id,
+            title=item["title"],
+            url=item.get("url"),
+            source=item.get("source"),
+            published_at=item.get("published_at"),
+            tag=tag,
+            ai_reason=reason or None,
+            query=item.get("query"),
+        ))
+
+    db.commit()
+
+    period = f"{bgn} ~ {end}"
+    note = "" if api_key else " · ANTHROPIC_API_KEY 가 없어 태깅을 건너뜀"
+    return NewsSummary(
+        period=period,
+        fetched=len(items),
+        saved=len(items),
+        by_tag=dict(by_tag),
+        untagged=untagged,
+        ai_used=bool(api_key),
+        message=f"뉴스 {len(items)}건 수집 — {period}"
+                + (f" · 감사 관련 {sum(by_tag.values())}건" if by_tag else "")
+                + note,
+    )
+
+
+@router.get("/companies/{company_id}/news", response_model=list[NewsLine])
+def list_news(
+    company_id: int,
+    tag: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    q = db.query(CompanyNews).filter(CompanyNews.company_id == company_id)
+    if tag:
+        q = q.filter(CompanyNews.tag == tag)
+    return q.order_by(CompanyNews.published_at.desc()).all()

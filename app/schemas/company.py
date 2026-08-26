@@ -26,6 +26,7 @@ class CompanyListItem(BaseModel):
     has_financials: bool = False
     has_disclosures: bool = False
     has_filings: bool = False
+    has_news: bool = False
 
     model_config = {"from_attributes": True}
 
@@ -116,4 +117,26 @@ class FilingsSummary(BaseModel):
     by_type: dict[str, int]          # 공시유형별 건수
     by_tag: dict[str, int]           # 감사 시사점별 건수
     untagged: int                    # 규칙에 걸리지 않은 건수
+    message: str
+
+
+class NewsLine(BaseModel):
+    id: int
+    title: str
+    url: Optional[str] = None
+    source: Optional[str] = None
+    published_at: Optional[str] = None
+    tag: Optional[str] = None
+    ai_reason: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+
+class NewsSummary(BaseModel):
+    period: str
+    fetched: int                   # 잡음·중복 제거 후 후보 건수
+    saved: int
+    by_tag: dict[str, int]
+    untagged: int
+    ai_used: bool
     message: str
