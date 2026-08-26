@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import {
-  collectFinancials, collectDisclosures, collectFilings, collectNews, collectSections,
+  collectFinancials, collectDisclosures, collectFilings, collectNews, collectSections, retagSections,
   exportAnalysis, deleteCompany,
 } from '../api/company'
 
@@ -29,6 +29,7 @@ export default function CompanyCard({ company, onClick, onChanged }) {
   const handleFilings    = run('filing', collectFilings)
   const handleNews       = run('news', collectNews)
   const handleSections   = run('sec', collectSections)
+  const handleRetag      = run('retag', retagSections)
   const handleExport     = run('export', exportAnalysis)
 
   const handleDelete = async (e) => {
@@ -139,6 +140,21 @@ export default function CompanyCard({ company, onClick, onChanged }) {
           >
             {busy === 'sec' ? '수집 중...' : '보고서 원문 수집'}
           </button>
+          {company.has_sections && (
+            <button
+              onClick={handleRetag}
+              title="원문을 다시 받지 않고 감사 관련 표시만 갱신합니다"
+              disabled={busy !== null}
+              style={{
+                background: 'none', color: '#8a9ab0', border: 'none',
+                padding: '2px 14px 4px', fontSize: 11,
+                textDecoration: 'underline', textUnderlineOffset: 3,
+                cursor: busy ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap',
+              }}
+            >
+              {busy === 'retag' ? '갱신 중...' : '표시만 갱신'}
+            </button>
+          )}
           <button
             onClick={handleDisclosure}
             disabled={busy !== null}

@@ -68,3 +68,6 @@ export const getSections = (id, { auditOnly } = {}) =>
 
 export const getSection = (id, sectionId) =>
   api.get(`/companies/${id}/sections/${sectionId}`).then(r => r.data)
+
+export const retagSections = (id) =>
+  api.post(`/companies/${id}/sections/retag`).then(r => r.data)

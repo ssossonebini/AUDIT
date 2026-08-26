@@ -741,3 +741,48 @@ def _find_annual_report_at_dart(
 
     _, row, year = max(candidates, key=lambda c: c[0])
     return row.get("rcept_no"), year, row.get("report_nm")
+
+
+@router.post("/companies/{company_id}/sections/retag")
+def retag_sections(company_id: int, db: Session = Depends(get_db)):
+    """저장된 구간의 감사 관련 표시만 다시 매긴다.
+
+    audit_relevant 는 저장 시점의 키워드 목록으로 굳는다. 목록이 바뀌어도
+    이미 받아둔 구간에는 반영되지 않는데, 그걸 위해 원문 8MB 를 다시 내려받아
+    파싱하는 것은 불리언 하나 값으로는 과하다. 제목만 다시 보면 된다.
+    """
+    company = db.query(Company).filter(Company.id == company_id).first()
+    if not company:
+        raise HTTPException(status_code=404, detail="회사를 찾을 수 없습니다.")
+
+    rows = (
+        db.query(ReportSection)
+        .filter(ReportSection.company_id == company.id)
+        .all()
+    )
+    if not rows:
+        raise HTTPException(
+            status_code=404,
+            detail="저장된 원문 구간이 없습니다. 보고서 원문 수집을 먼저 해주세요.",
+        )
+
+    added, removed = [], []
+    for row in rows:
+        now = dart_document.is_audit_relevant(row.title)
+        if now == bool(row.audit_relevant):
+            continue
+        (added if now else removed).append(row.title)
+        row.audit_relevant = now
+
+    db.commit()
+    total = sum(1 for r in rows if r.audit_relevant)
+
+    changed = f" — 추가 {len(added)}개" if added else ""
+    changed += f" · 해제 {len(removed)}개" if removed else ""
+    return {
+        "total_sections": len(rows),
+        "audit_relevant": total,
+        "added": added,
+        "removed": removed,
+        "message": f"감사 관련 표시 {total}개{changed or ' (변동 없음)'}",
+    }

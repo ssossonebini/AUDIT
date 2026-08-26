@@ -514,3 +514,47 @@ def test_missing_annual_report_is_reported_clearly(client, monkeypatch):
     r = client.post(f"{PREFIX}/companies/{created['id']}/sections")
     assert r.status_code == 404
     assert "사업보고서" in r.json()["detail"]
+
+
+def test_retag_updates_flags_without_refetching(client, monkeypatch):
+    """키워드 목록이 바뀌었다고 8MB 를 다시 받을 이유는 없다."""
+    from app.crawler import dart_document
+    from app.db.models import ReportSection
+
+    created = _register(client, monkeypatch)
+    monkeypatch.setattr(dart_client, "fetch_disclosure_list", lambda *a, **k: [
+        _annual("1", "사업보고서 (2025.12)", "20260310"),
+    ])
+
+    xml = ("<DOCUMENT><BODY><SECTION-1><TITLE>III. 재무</TITLE>"
+           "<SECTION-2><TITLE>10. 투자부동산</TITLE><P>내용</P></SECTION-2>"
+           "</SECTION-1></BODY></DOCUMENT>")
+    monkeypatch.setattr(dart_document, "fetch_document", lambda r: {"1.xml": xml})
+    client.post(f"{PREFIX}/companies/{created['id']}/sections")
+
+    # 저장 시점에 표시가 없었던 상태를 만든다
+    db = SessionLocal()
+    for row in db.query(ReportSection).all():
+        row.audit_relevant = False
+    db.commit()
+    db.close()
+
+    calls = []
+    monkeypatch.setattr(dart_document, "fetch_document",
+                        lambda r: calls.append(r) or {})
+
+    r = client.post(f"{PREFIX}/companies/{created['id']}/sections/retag")
+    assert r.status_code == 200, r.text
+    body = r.json()
+
+    assert calls == [], "재태깅이 원문을 다시 내려받았습니다"
+    assert "10. 투자부동산" in body["added"]
+    assert body["audit_relevant"] >= 1
+
+
+def test_retag_without_collected_sections_is_reported(client, monkeypatch):
+    created = _register(client, monkeypatch)
+    r = client.post(f"{PREFIX}/companies/{created['id']}/sections/retag")
+
+    assert r.status_code == 404
+    assert "원문 수집" in r.json()["detail"]
