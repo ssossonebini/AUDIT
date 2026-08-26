@@ -3,6 +3,7 @@
 """
 import json
 import logging
+import re
 from collections import Counter
 from datetime import date
 from typing import Optional
@@ -599,14 +600,14 @@ def collect_sections(
     if not company:
         raise HTTPException(status_code=404, detail="회사를 찾을 수 없습니다.")
 
-    target, year = rcept_no, None
+    target, year, report_nm = rcept_no, None, None
     if not target:
-        target, year = _latest_annual_report(db, company)
+        target, year, report_nm = _latest_annual_report(db, company)
     if not target:
         raise HTTPException(
             status_code=404,
-            detail="사업보고서 접수번호를 찾지 못했습니다. 주요정보를 먼저 수집하거나 "
-                   "rcept_no 를 직접 지정해주세요.",
+            detail="사업보고서를 찾지 못했습니다. 공시된 사업보고서가 있는지 "
+                   "확인하거나 rcept_no 를 직접 지정해주세요.",
         )
 
     documents = _dart_call(dart_document.fetch_document, target)
@@ -644,10 +645,12 @@ def collect_sections(
     db.commit()
     total = sum(per_document.values())
 
+    label = report_nm or (f"{year}년 사업보고서" if year else "사업보고서")
     return SectionsSummary(
-        rcept_no=target, bsns_year=year, documents=per_document,
-        total_sections=total, audit_relevant=relevant, total_chars=total_chars,
-        message=f"사업보고서 원문 {total}개 구간 저장 — 감사 관련 {relevant}개 "
+        rcept_no=target, bsns_year=year, report_nm=report_nm,
+        documents=per_document, total_sections=total,
+        audit_relevant=relevant, total_chars=total_chars,
+        message=f"{label} 원문 {total}개 구간 저장 — 감사 관련 {relevant}개 "
                 f"· 전체 {total_chars:,}자 (접수번호 {target})",
     )
 
@@ -686,12 +689,19 @@ def get_section(company_id: int, section_id: int, db: Session = Depends(get_db))
     }
 
 
-def _latest_annual_report(db: Session, company: Company) -> tuple[Optional[str], Optional[int]]:
-    """수집해 둔 주요정보에서 가장 최근 사업보고서 접수번호를 찾는다.
+ANNUAL_REPORT_NAME = re.compile(r"사업보고서\s*\((\d{4})[.\s]")
 
-    disclosure_filings 에는 없다 — 그쪽은 B·F·I·J 만 모으고 정기공시(A)는
-    대상이 아니기 때문이다. 주요정보는 사업보고서에서 뽑은 것이라
-    payload 의 rcept_no 가 곧 사업보고서 접수번호다.
+
+def _latest_annual_report(
+    db: Session, company: Company
+) -> tuple[Optional[str], Optional[int], Optional[str]]:
+    """가장 최근 사업보고서의 (접수번호, 사업연도, 보고서명) 을 찾는다.
+
+    이미 받아둔 주요정보에서 먼저 본다 — 주요정보는 사업보고서에서 뽑은 것이라
+    payload 의 rcept_no 가 곧 사업보고서 접수번호이고, 호출이 들지 않는다.
+
+    없으면 DART 공시 목록(정기공시 A)에서 직접 찾는다. 그래야 주요정보를
+    수집하지 않은 상태에서도 원문을 받을 수 있다 — 수집 순서에 매이지 않는다.
     """
     rows = (
         db.query(DisclosureItem)
@@ -700,8 +710,34 @@ def _latest_annual_report(db: Session, company: Company) -> tuple[Optional[str],
         .all()
     )
     for row in rows:
-        payload = _safe_json(row.payload)
-        rcept_no = payload.get("rcept_no") or row.rcept_no
+        rcept_no = _safe_json(row.payload).get("rcept_no") or row.rcept_no
         if rcept_no:
-            return rcept_no, row.bsns_year
-    return None, None
+            return rcept_no, row.bsns_year, None
+
+    return _find_annual_report_at_dart(company)
+
+
+def _find_annual_report_at_dart(
+    company: Company,
+) -> tuple[Optional[str], Optional[int], Optional[str]]:
+    """정기공시(A) 목록에서 가장 최근 사업보고서를 고른다.
+
+    반기·분기보고서가 섞여 오므로 보고서명으로 걸러낸다. [기재정정] 본은
+    같은 사업연도의 최신본이므로 접수일이 늦은 쪽을 택하면 자연히 잡힌다.
+    """
+    bgn_de, end_de = dart_client.fiscal_window(date.today())
+    rows = _dart_call(
+        dart_client.fetch_disclosure_list, company.corp_code, bgn_de, end_de, "A"
+    )
+
+    candidates = []
+    for row in rows:
+        match = ANNUAL_REPORT_NAME.search(row.get("report_nm", ""))
+        if match:
+            candidates.append((row.get("rcept_dt", ""), row, int(match.group(1))))
+
+    if not candidates:
+        return None, None, None
+
+    _, row, year = max(candidates, key=lambda c: c[0])
+    return row.get("rcept_no"), year, row.get("report_nm")

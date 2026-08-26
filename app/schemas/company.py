@@ -27,6 +27,7 @@ class CompanyListItem(BaseModel):
     has_disclosures: bool = False
     has_filings: bool = False
     has_news: bool = False
+    has_sections: bool = False
 
     model_config = {"from_attributes": True}
 
@@ -166,6 +167,7 @@ class SectionLine(BaseModel):
 class SectionsSummary(BaseModel):
     rcept_no: str
     bsns_year: Optional[int] = None
+    report_nm: Optional[str] = None    # 어느 보고서를 받았는지
     documents: dict[str, int]      # 문서별 섹션 수
     total_sections: int
     audit_relevant: int

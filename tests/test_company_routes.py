@@ -452,3 +452,65 @@ def test_recollecting_filings_replaces_the_previous_set(client, monkeypatch):
 
     rows = client.get(f"{PREFIX}/companies/{created['id']}/filings").json()
     assert len(rows) == 1
+
+
+# ── 사업보고서 원문 ────────────────────────────────────────────────
+
+def _annual(rcept_no, report_nm, rcept_dt):
+    return {"rcept_no": rcept_no, "report_nm": report_nm,
+            "rcept_dt": rcept_dt, "flr_nm": "삼성전자", "pblntf_ty": "A"}
+
+
+def test_sections_do_not_require_disclosures_to_be_collected_first(client, monkeypatch):
+    """수집 순서에 매이면 안 된다 — 화면 버튼 순서를 바꾸면 바로 깨진다."""
+    created = _register(client, monkeypatch)
+    monkeypatch.setattr(dart_client, "fetch_disclosure_list", lambda *a, **k: [
+        _annual("20260310002820", "사업보고서 (2025.12)", "20260310"),
+    ])
+    from app.crawler import dart_document
+    monkeypatch.setattr(dart_document, "fetch_document",
+                        lambda rcept_no: {"20260310002820.xml": "<DOCUMENT/>"})
+
+    r = client.post(f"{PREFIX}/companies/{created['id']}/sections")
+    assert r.status_code == 200, r.text
+    assert r.json()["rcept_no"] == "20260310002820"
+
+
+def test_annual_report_is_chosen_over_half_year_and_quarterly(client, monkeypatch):
+    """정기공시에는 반기·분기보고서가 섞여 온다."""
+    created = _register(client, monkeypatch)
+    monkeypatch.setattr(dart_client, "fetch_disclosure_list", lambda *a, **k: [
+        _annual("2", "반기보고서 (2026.06)", "20260814"),
+        _annual("1", "사업보고서 (2025.12)", "20260310"),
+        _annual("3", "분기보고서 (2026.03)", "20260515"),
+    ])
+    from app.crawler import dart_document
+    monkeypatch.setattr(dart_document, "fetch_document",
+                        lambda rcept_no: {f"{rcept_no}.xml": "<DOCUMENT/>"})
+
+    body = client.post(f"{PREFIX}/companies/{created['id']}/sections").json()
+    assert body["rcept_no"] == "1"
+    assert body["bsns_year"] == 2025
+
+
+def test_the_latest_correction_of_an_annual_report_wins(client, monkeypatch):
+    """[기재정정] 본이 원본보다 나중에 접수된다."""
+    created = _register(client, monkeypatch)
+    monkeypatch.setattr(dart_client, "fetch_disclosure_list", lambda *a, **k: [
+        _annual("1", "사업보고서 (2025.12)", "20260310"),
+        _annual("2", "[기재정정]사업보고서 (2025.12)", "20260420"),
+    ])
+    from app.crawler import dart_document
+    monkeypatch.setattr(dart_document, "fetch_document",
+                        lambda rcept_no: {f"{rcept_no}.xml": "<DOCUMENT/>"})
+
+    assert client.post(f"{PREFIX}/companies/{created['id']}/sections").json()["rcept_no"] == "2"
+
+
+def test_missing_annual_report_is_reported_clearly(client, monkeypatch):
+    created = _register(client, monkeypatch)
+    monkeypatch.setattr(dart_client, "fetch_disclosure_list", lambda *a, **k: [])
+
+    r = client.post(f"{PREFIX}/companies/{created['id']}/sections")
+    assert r.status_code == 404
+    assert "사업보고서" in r.json()["detail"]
