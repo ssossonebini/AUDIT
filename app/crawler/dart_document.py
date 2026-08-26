@@ -15,10 +15,13 @@
   < 가 8개(`< TV 시장점유율 추이 >`) 있다. ElementTree 는 실패하므로
   lxml 의 recover=True 로 읽는다.
 - 목차는 SECTION-1(14) → SECTION-2(43) 이고 제목은 각 섹션의 <TITLE> 이다.
-- **주석은 SECTION-3 으로 내려가지 않는다.** 「3. 연결재무제표 주석」 하나의
-  SECTION-2 안에 <TITLE> 34개가 평평하게 나열된다. 그래서 개별 주석을 뽑으려면
-  SECTION 이 아니라 TITLE 위치로 잘라야 한다.
+- **주석은 SECTION-3 으로 내려가지 않는다.** 「3. 연결재무제표 주석」 SECTION-2
+  아래에 TABLE-GROUP 34개가 놓이고, 각 TABLE-GROUP 이 TITLE 을 하나씩 갖는다.
+  문서 전체 TITLE 143개의 부모는 TABLE-GROUP 83 / SECTION-2 43 / SECTION-1 14 라,
+  SECTION 의 직계 TITLE 만 보면 주석이 통째로 뭉친다.
 - 표는 TD 외에 TE(16,845) · TU(631) 를 쓴다. 함께 읽지 않으면 표가 빈다.
+  TABLE 2,071개 중 SECTION 직계는 314개뿐이고 나머지는 TABLE-GROUP·LIBRARY·TD
+  안쪽에 있으므로, 텍스트 추출은 재귀로 내려가야 표가 살아남는다.
 """
 
 import io
@@ -100,21 +103,45 @@ def _root(xml_text: str):
     return etree.fromstring(xml_text.encode("utf-8"), parser=parser)
 
 
-def _text_of(node) -> str:
-    """표를 보존하며 텍스트를 뽑는다."""
-    if node.tag == "TABLE":
-        rows = []
-        for tr in node.iter("TR"):
-            cells = [
-                " ".join(c.itertext()).strip()
-                for c in tr
-                if c.tag in CELL_TAGS
-            ]
-            if any(cells):
-                rows.append(" | ".join(cells))
-        return "\n".join(rows)
+def _render_table(table) -> str:
+    """표를 행 단위로 편다. TE·TU 를 빼면 금액이 통째로 사라진다."""
+    rows = []
+    for tr in table.iter("TR"):
+        cells = [
+            re.sub(r"\s+", " ", " ".join(c.itertext())).strip()
+            for c in tr
+            if c.tag in CELL_TAGS
+        ]
+        if any(cells):
+            rows.append(" | ".join(cells))
+    return "\n".join(rows)
 
-    return " ".join(t.strip() for t in node.itertext() if t.strip())
+
+def _text_of(node, skip=None) -> str:
+    """표 구조를 보존하며 텍스트를 뽑는다.
+
+    itertext() 로 납작하게 펴면 표가 뭉개진다. TABLE 은 대부분 TABLE-GROUP 이나
+    LIBRARY 안쪽에 있어, 직계만 보는 방식으로는 걸리지 않는다. 그래서 재귀로
+    내려가며 TABLE 을 만나는 즉시 행 단위로 렌더링한다.
+    """
+    if node.tag == "TABLE":
+        return _render_table(node)
+
+    parts = []
+    if node.text and node.text.strip():
+        parts.append(node.text.strip())
+
+    for child in node:
+        if child.tag == "TITLE" or child is skip:
+            pass
+        else:
+            rendered = _text_of(child)
+            if rendered:
+                parts.append(rendered)
+        if child.tail and child.tail.strip():
+            parts.append(child.tail.strip())
+
+    return "\n".join(parts)
 
 
 def _title_text(node) -> str:
@@ -122,13 +149,15 @@ def _title_text(node) -> str:
 
 
 def _body_until_next_title(title_node) -> str:
-    """평평하게 나열된 TITLE 사이의 본문을 모은다.
+    """다음 하위 항목이 시작되기 전까지의 본문을 모은다.
 
-    주석이 이 구조다 — SECTION 으로 감싸이지 않고 TITLE 이 형제로 늘어선다.
+    중단 조건이 둘이다. TITLE 이 형제로 놓인 판본에서는 그 TITLE 에서 멈추고,
+    TABLE-GROUP 에 감싸인 보통의 경우에는 **TITLE 을 품은 컨테이너**에서 멈춘다.
+    후자를 빠뜨리면 중분류가 하위 주석 본문을 전부 삼킨다.
     """
     parts = []
     for sibling in title_node.itersiblings():
-        if sibling.tag == "TITLE":
+        if sibling.tag == "TITLE" or sibling.find("TITLE") is not None:
             break
         text = _text_of(sibling)
         if text:
@@ -136,11 +165,37 @@ def _body_until_next_title(title_node) -> str:
     return "\n".join(parts)
 
 
+def _sub_items(section, own_title) -> list[tuple]:
+    """SECTION-2 안의 하위 항목(주석 등)을 (TITLE, 본문) 으로 뽑는다.
+
+    실제 문서에서 주석은 SECTION-2 의 직계 TITLE 이 아니라 TABLE-GROUP 안에
+    하나씩 들어 있다 (TITLE 143개의 부모: TABLE-GROUP 83 / SECTION-2 43).
+    직계만 찾으면 주석 34개가 통째로 뭉친다.
+
+    판본 차이를 감안해 두 배치를 모두 받는다 — TABLE-GROUP 에 감싸인 것과
+    형제로 늘어선 것.
+    """
+    items = []
+    for child in section:
+        if child is own_title:
+            continue
+
+        if child.tag == "TITLE":                       # 형제로 놓인 경우
+            items.append((child, _body_until_next_title(child)))
+            continue
+
+        inner = child.find("TITLE")                    # TABLE-GROUP 등에 감싸인 경우
+        if inner is not None:
+            items.append((inner, _text_of(child, skip=inner)))
+
+    return items
+
+
 def parse_sections(xml_text: str) -> list[dict]:
     """목차 단위로 쪼갠다.
 
-    SECTION-1 / SECTION-2 는 섹션 태그로, 그 안에 평평하게 놓인 TITLE 은
-    하위 항목(주석 등)으로 잡는다.
+    SECTION-1 / SECTION-2 는 섹션 태그이고, 하위 항목(주석 등)은 SECTION-2 안의
+    TABLE-GROUP 에 하나씩 들어 있다. _sub_items() 참조.
 
     Returns:
         [{level, title, parent, section_no, body, chars, audit_relevant}]
@@ -184,15 +239,15 @@ def parse_sections(xml_text: str) -> list[dict]:
                 continue
             name2 = _title_text(t2)
 
-            # SECTION-2 의 직계 TITLE 중 첫 번째를 뺀 나머지가 하위 항목이다
-            flat = [t for t in s2.findall("TITLE") if t is not t2]
+            items = _sub_items(s2, t2)
 
-            if not flat:
+            if not items:
                 _emit(2, name2, name1, t2, _text_of(s2))
                 continue
 
+            # 하위 항목이 있으면 중분류는 머리말만 갖는다
             _emit(2, name2, name1, t2, _body_until_next_title(t2))
-            for t3 in flat:
-                _emit(3, _title_text(t3), name2, t3, _body_until_next_title(t3))
+            for t3, body in items:
+                _emit(3, _title_text(t3), name2, t3, body)
 
     return sections

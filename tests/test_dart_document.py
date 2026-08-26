@@ -1,9 +1,15 @@
 """사업보고서 원문(document.xml) 파싱 검증.
 
-픽스처는 실제 응답에서 확인한 성질을 그대로 재현한다 (삼성전자 제57기):
+픽스처는 실제 응답 구조를 그대로 재현한다 (삼성전자 제57기):
 - 이스케이프되지 않은 & 와 < 가 섞여 있어 엄밀한 XML 이 아니다
-- 주석은 SECTION-3 이 아니라 SECTION-2 안의 평평한 TITLE 로 나열된다
+- **주석은 SECTION-2 의 직계 TITLE 이 아니라 TABLE-GROUP 안에** 하나씩 있다
+  (TITLE 143개의 부모: TABLE-GROUP 83 / SECTION-2 43 / SECTION-1 14)
+- **TABLE 은 SECTION 직계가 아니라 TABLE-GROUP·LIBRARY 안쪽**에 있다
+  (2,071개 중 직계는 314개뿐) — 추출이 재귀가 아니면 표가 납작해진다
 - 표는 TD 외에 TE·TU 를 쓴다
+
+앞선 픽스처는 TITLE 을 SECTION-2 직계에 두어 이 두 경로를 짚지 못했고,
+테스트 15개가 통과하는 동안 실제 문서에서는 주석이 하나도 분리되지 않았다.
 """
 
 import io
@@ -32,17 +38,28 @@ XML = """<?xml version="1.0" encoding="utf-8"?>
     <SECTION-2>
       <TITLE ATOC="Y" AASSOCNOTE="D-0-3-3-0">3. 연결재무제표 주석</TITLE>
       <P>주석 머리말입니다.</P>
-      <TITLE ATOCID="579">8. 재고자산 (연결)</TITLE>
-      <P>재고자산 평가충당금 내역입니다.</P>
-      <TABLE>
-        <TR><TH>구분</TH><TH>당기</TH></TR>
-        <TR><TD>제품</TD><TE>1,000</TE></TR>
-        <TR><TD>원재료</TD><TU>2,000</TU></TR>
-      </TABLE>
-      <TITLE ATOCID="602">31. 특수관계자와의 거래 (연결)</TITLE>
-      <P>삼성에스디에스㈜ 매출 등 110,512</P>
-      <TITLE ATOCID="605">32. 비지배지분 (연결)</TITLE>
-      <P>비지배지분 내역입니다.</P>
+      <TABLE-GROUP>
+        <TITLE ATOCID="579">8. 재고자산 (연결)</TITLE>
+        <P>재고자산 평가충당금 내역입니다.</P>
+        <TABLE>
+          <TR><TH>구분</TH><TH>당기</TH></TR>
+          <TR><TD>제품</TD><TE>1,000</TE></TR>
+          <TR><TD>원재료</TD><TU>2,000</TU></TR>
+        </TABLE>
+      </TABLE-GROUP>
+      <TABLE-GROUP>
+        <TITLE ATOCID="602">31. 특수관계자와의 거래 (연결)</TITLE>
+        <LIBRARY>
+          <TABLE>
+            <TR><TH>구분</TH><TH>삼성에스디에스㈜</TH></TR>
+            <TR><TD>매출 등</TD><TE>110,512</TE></TR>
+          </TABLE>
+        </LIBRARY>
+      </TABLE-GROUP>
+      <TABLE-GROUP>
+        <TITLE ATOCID="605">32. 비지배지분 (연결)</TITLE>
+        <P>비지배지분 내역입니다.</P>
+      </TABLE-GROUP>
     </SECTION-2>
   </SECTION-1>
 </BODY>
@@ -89,8 +106,11 @@ def test_second_level_records_its_parent(sections):
     assert notes["parent"] == "III. 재무에 관한 사항"
 
 
-def test_flat_titles_inside_a_section_become_their_own_entries(sections):
-    """주석은 SECTION-3 으로 내려가지 않는다. TITLE 위치로 잘라야 한다."""
+def test_notes_wrapped_in_table_groups_become_their_own_entries(sections):
+    """주석은 SECTION-2 의 직계 TITLE 이 아니라 TABLE-GROUP 안에 있다.
+
+    직계만 찾으면 34개가 통째로 뭉쳐 특수관계자 주석을 따로 꺼낼 수 없다.
+    """
     titles = [s["title"] for s in sections if s["level"] == 3]
 
     assert "8. 재고자산 (연결)" in titles
@@ -98,13 +118,33 @@ def test_flat_titles_inside_a_section_become_their_own_entries(sections):
     assert "32. 비지배지분 (연결)" in titles
 
 
-def test_a_flat_title_body_stops_at_the_next_title(sections):
-    """구간이 다음 주석까지 넘어가면 안 된다."""
+def test_a_note_body_does_not_bleed_into_its_neighbours(sections):
+    """구간이 앞뒤 주석까지 넘어가면 안 된다."""
     related = _by_title(sections, "특수관계자")
 
     assert "삼성에스디에스" in related["body"]
     assert "비지배지분 내역" not in related["body"]
     assert "재고자산 평가충당금" not in related["body"]
+
+
+def test_a_note_body_excludes_its_own_title(sections):
+    related = _by_title(sections, "특수관계자")
+    assert "31. 특수관계자와의 거래" not in related["body"]
+
+
+def test_nested_tables_keep_their_rows(sections):
+    """TABLE 은 대부분 TABLE-GROUP·LIBRARY 안쪽에 있다. 재귀가 아니면 납작해진다."""
+    related = _by_title(sections, "특수관계자")
+
+    assert "매출 등 | 110,512" in related["body"], "중첩 TABLE 이 뭉개졌습니다"
+
+
+def test_section_headnote_is_kept_separate_from_the_notes(sections):
+    """중분류에는 머리말만 남고 주석 본문이 섞이지 않아야 한다."""
+    heading = _by_title(sections, "연결재무제표 주석")
+
+    assert "주석 머리말" in heading["body"]
+    assert "삼성에스디에스" not in heading["body"]
 
 
 def test_section_number_is_kept_for_navigation(sections):

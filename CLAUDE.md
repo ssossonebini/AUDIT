@@ -214,10 +214,15 @@ F(외부감사관련)·I(거래소공시)·J(공정위공시).
 - **엄밀한 XML 이 아니다.** 이스케이프 안 된 `&`(R&D 등)·`<` 가 섞여 있어
   ElementTree 는 실패한다. `lxml` 의 `XMLParser(recover=True)` 를 쓴다.
 - 목차는 `SECTION-1`(14) → `SECTION-2`(43), 제목은 각 섹션의 `<TITLE>`.
-- **주석은 SECTION-3 으로 안 내려간다.** 「3. 연결재무제표 주석」 하나의
-  SECTION-2 안에 `<TITLE>` 34개가 평평하게 나열되므로, 개별 주석은 SECTION 이
-  아니라 **TITLE 위치로 잘라야** 한다.
+- **주석은 SECTION-3 으로 안 내려간다.** 「3. 연결재무제표 주석」 SECTION-2
+  아래에 `TABLE-GROUP` 34개가 놓이고 각각이 `TITLE` 을 하나씩 갖는다.
+  TITLE 143개의 부모는 **TABLE-GROUP 83 / SECTION-2 43 / SECTION-1 14** 라,
+  SECTION 의 직계 TITLE 만 보면 주석 34개가 통째로 뭉친다.
+- 중분류 본문을 자를 때 **TITLE 을 품은 컨테이너에서 멈춰야** 한다. 형제 TITLE
+  만 보고 멈추면 중분류가 하위 주석 본문을 전부 삼킨다.
 - 표는 `TD` 외에 **`TE`(16,845) · `TU`(631)** 를 쓴다. 빼면 표가 빈다.
+- `TABLE` 2,071개 중 SECTION 직계는 **314개뿐**이고 나머지는 TABLE-GROUP·
+  LIBRARY·TD 안쪽이다. 텍스트 추출이 **재귀가 아니면 표가 납작해진다.**
 
 본문만 8MB라 통째로 두지 않고 `report_sections` 에 목차 단위로 나눠 저장한다.
 `00_INPUT.md` 에는 감사 관련 구간의 목차만 싣고, 본문은 SQL 로 꺼내 읽는다 —
