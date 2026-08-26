@@ -234,3 +234,77 @@ def test_export_endpoint_reports_the_entry_file_size(seeded):
 def test_export_endpoint_404s_for_an_unknown_company():
     client = TestClient(app)
     assert client.post(f"{PREFIX}/companies/9999/export").status_code == 404
+
+
+# ── 사업보고서와 중간보고서를 섞지 않는다 ──────────────────────────
+#
+# 두 보고서를 함께 담으므로, 한 표에 몰아 넣으면 같은 계정이 두 번 나와
+# 어느 시점 값인지 알 수 없게 된다. 게다가 중간보고서 수치는 감사받은 것이
+# 아니어서 같은 무게로 읽히면 안 된다.
+
+@pytest.fixture
+def with_interim(seeded):
+    company, db, root = seeded
+    db.add_all([
+        FinancialStatement(
+            company_id=company.id, bsns_year=2026, reprt_code="11012",
+            fs_div="CFS", sj_div="BS", account_nm="자산총계", ord=1,
+            currency="KRW", thstrm_nm="제 11 기 반기",
+            thstrm_amount=3300, frmtrm_amount=3000, bfefrmtrm_amount=None,
+        ),
+        FinancialStatement(
+            company_id=company.id, bsns_year=2026, reprt_code="11012",
+            fs_div="CFS", sj_div="BS", account_nm="현금및현금성자산", ord=2,
+            currency="KRW", thstrm_amount=120, frmtrm_amount=500,
+        ),
+    ])
+    db.commit()
+    return company, db, root
+
+
+def test_the_two_reports_get_their_own_tables(with_interim):
+    company, db, root = with_interim
+    exporter.export(db, company)
+    text = _read(root, "00_INPUT.md")
+
+    assert "2025년 사업보고서" in text
+    assert "2026년 반기보고서" in text
+
+
+def test_the_interim_figures_are_marked_as_unaudited(with_interim):
+    """검토(review)와 감사를 같은 무게로 읽으면 안 된다."""
+    company, db, root = with_interim
+    exporter.export(db, company)
+    text = _read(root, "00_INPUT.md")
+
+    assert "감사받지 않은" in text or "감사받은 것이 아니다" in text
+
+
+def test_the_interim_table_does_not_claim_a_third_year(with_interim):
+    """중간보고서에는 전전기 열이 없다. 빈 칸을 0 으로 읽히게 두면 안 된다."""
+    company, db, root = with_interim
+    exporter.export(db, company)
+    text = _read(root, "00_INPUT.md")
+
+    half = text.split("2026년 반기보고서")[1].split("\n### ")[0]
+    assert "전년 동기" in half
+    assert "전전기" not in half
+
+
+def test_the_detail_file_separates_the_reports_too(with_interim):
+    company, db, root = with_interim
+    exporter.export(db, company)
+    text = _read(root, "01_financials/재무제표_전체.md")
+
+    assert "2025년 사업보고서" in text
+    assert "2026년 반기보고서" in text
+
+
+def test_a_company_with_only_an_annual_report_reads_as_before(seeded):
+    """중간보고서가 없으면 경고문이 붙지 않아야 한다."""
+    company, db, root = seeded
+    exporter.export(db, company)
+    text = _read(root, "00_INPUT.md")
+
+    assert "2025년 사업보고서" in text
+    assert "감사받지 않은" not in text

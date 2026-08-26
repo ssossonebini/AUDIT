@@ -558,3 +558,255 @@ def test_retag_without_collected_sections_is_reported(client, monkeypatch):
 
     assert r.status_code == 404
     assert "원문 수집" in r.json()["detail"]
+
+
+# ── 전기말 사업보고서 + 당기중 최신 분·반기보고서 ────────────────────
+#
+# 사업보고서만 보면 기말(2025-12-31)에 멈춘 숫자로 2026년 기말감사 위험을
+# 평가하게 된다. 유동비율이 반기에 어디까지 갔는지가 계속기업 판단의 핵심인데
+# 그걸 볼 수 없다. 반대로 중간보고서만 보면 3개년 비교와 완전한 주석을 잃는다.
+
+def _periodic_list(*names):
+    """정기공시(A) 목록 대역. (보고서명, 접수일, 접수번호)"""
+    return [
+        {"report_nm": nm, "rcept_dt": dt, "rcept_no": no, "flr_nm": "회사",
+         "corp_name": "테스트", "corp_code": "00000000"}
+        for nm, dt, no in names
+    ]
+
+
+def _quarter_row(sj_div, name, ord_, add, prior_add, prior_q):
+    """분기·반기 응답. 손익은 3개월과 누적이 따로 온다."""
+    return {
+        "sj_div": sj_div, "sj_nm": "손익계산서", "account_nm": name,
+        "account_id": f"ifrs-full_{name}", "ord": ord_, "currency": "KRW",
+        "thstrm_nm": "제 76 기 반기", "thstrm_amount": "1",   # 3개월분
+        "thstrm_add_amount": add,
+        "frmtrm_q_amount": prior_q, "frmtrm_add_amount": prior_add,
+    }
+
+
+@pytest.fixture
+def periodic(monkeypatch):
+    """2025 사업보고서와 2026 반기보고서가 공시된 회사."""
+    monkeypatch.setattr(dart_client, "fetch_company",
+                        lambda code: {"corp_name": "(주)영풍", "acc_mt": "12"})
+    monkeypatch.setattr(dart_client, "fetch_disclosure_list",
+                        lambda *a, **k: _periodic_list(
+                            ("반기보고서 (2026.06)", "20260814", "BBB"),
+                            ("사업보고서 (2025.12)", "20260317", "AAA"),
+                            ("분기보고서 (2025.09)", "20251114", "OLD"),
+                        ))
+
+
+def test_both_the_annual_and_the_latest_interim_are_collected(client, periodic, monkeypatch):
+    asked = []
+
+    def fake_fetch(corp_code, year, fs_div="CFS", reprt_code=None):
+        asked.append((year, reprt_code, fs_div))
+        if fs_div == "OFS":
+            raise dart_client.DartError("013")
+        return [_annual_row("BS", "자산총계", 1, "100", "90", "80")]
+
+    monkeypatch.setattr(dart_client, "fetch_financials", fake_fetch)
+
+    created = client.post(f"{PREFIX}/companies",
+                          json={"corp_code": "00141307", "audit_year": 2026}).json()
+    r = client.post(f"{PREFIX}/companies/{created['id']}/financials")
+    assert r.status_code == 200, r.text
+
+    got = {(y, c) for y, c, _ in asked}
+    assert (2025, "11011") in got, "전기말 사업보고서를 받지 않았습니다"
+    assert (2026, "11012") in got, "당기 반기보고서를 받지 않았습니다"
+
+    reports = {(x["bsns_year"], x["reprt_code"]) for x in r.json()["reports"]}
+    assert reports == {(2025, "11011"), (2026, "11012")}
+
+
+def test_an_interim_older_than_the_annual_is_ignored(client, monkeypatch):
+    """2025년 3분기는 2025 사업보고서에 이미 흡수됐다. 다시 받을 이유가 없다."""
+    monkeypatch.setattr(dart_client, "fetch_company",
+                        lambda code: {"corp_name": "회사", "acc_mt": "12"})
+    monkeypatch.setattr(dart_client, "fetch_disclosure_list",
+                        lambda *a, **k: _periodic_list(
+                            ("사업보고서 (2025.12)", "20260317", "AAA"),
+                            ("분기보고서 (2025.09)", "20251114", "OLD"),
+                        ))
+    asked = []
+    monkeypatch.setattr(dart_client, "fetch_financials",
+                        lambda c, y, fs_div="CFS", reprt_code=None:
+                        (asked.append((y, reprt_code)) or
+                         [_annual_row("BS", "자산총계", 1, "100", "90", "80")]))
+
+    created = client.post(f"{PREFIX}/companies",
+                          json={"corp_code": "00000001", "audit_year": 2026}).json()
+    client.post(f"{PREFIX}/companies/{created['id']}/financials")
+
+    assert {c for _, c in asked} == {"11011"}
+
+
+def test_the_half_year_does_not_erase_the_annual(client, periodic, monkeypatch):
+    """삭제 조건에 reprt_code 가 빠지면 나중에 받은 쪽이 앞의 것을 지운다."""
+    def fake_fetch(corp_code, year, fs_div="CFS", reprt_code=None):
+        if fs_div == "OFS":
+            raise dart_client.DartError("013")
+        if reprt_code == dart_client.REPRT_ANNUAL:
+            return [_annual_row("BS", "자산총계", 1, "100", "90", "80")]
+        return [_quarter_row("IS", "매출액", 1, "50", "40", "20")]
+
+    monkeypatch.setattr(dart_client, "fetch_financials", fake_fetch)
+
+    created = client.post(f"{PREFIX}/companies",
+                          json={"corp_code": "00141307", "audit_year": 2026}).json()
+    client.post(f"{PREFIX}/companies/{created['id']}/financials")
+
+    rows = client.get(f"{PREFIX}/companies/{created['id']}/financials").json()
+    codes = {r["reprt_code"] for r in rows}
+    assert codes == {"11011", "11012"}, f"보고서가 서로를 지웠습니다: {codes}"
+
+
+def test_recollecting_replaces_only_the_same_report(client, periodic, monkeypatch):
+    monkeypatch.setattr(
+        dart_client, "fetch_financials",
+        lambda c, y, fs_div="CFS", reprt_code=None:
+        [] if fs_div == "OFS" else [_annual_row("BS", "자산총계", 1, "100", "90", "80")])
+
+    created = client.post(f"{PREFIX}/companies",
+                          json={"corp_code": "00141307", "audit_year": 2026}).json()
+    client.post(f"{PREFIX}/companies/{created['id']}/financials")
+    first = len(client.get(f"{PREFIX}/companies/{created['id']}/financials").json())
+
+    client.post(f"{PREFIX}/companies/{created['id']}/financials")
+    again = len(client.get(f"{PREFIX}/companies/{created['id']}/financials").json())
+
+    assert first == again, "다시 수집하니 행이 늘었습니다"
+
+
+def test_interim_income_is_stored_on_a_cumulative_basis(client, periodic, monkeypatch):
+    """당기를 누적으로 읽고 전기를 3개월로 읽으면 전년 동기 대비가 어긋난다."""
+    def fake_fetch(corp_code, year, fs_div="CFS", reprt_code=None):
+        if fs_div == "OFS":
+            raise dart_client.DartError("013")
+        if reprt_code == dart_client.REPRT_ANNUAL:
+            return []
+        return [_quarter_row("IS", "매출액", 1, "50", "40", "20")]
+
+    monkeypatch.setattr(dart_client, "fetch_financials", fake_fetch)
+
+    created = client.post(f"{PREFIX}/companies",
+                          json={"corp_code": "00141307", "audit_year": 2026}).json()
+    client.post(f"{PREFIX}/companies/{created['id']}/financials")
+
+    rows = client.get(f"{PREFIX}/companies/{created['id']}/financials",
+                      params={"reprt_code": "11012"}).json()
+    line = next(r for r in rows if r["account_nm"] == "매출액")
+
+    assert line["thstrm_amount"] == 50, "당기가 3개월 금액입니다"
+    assert line["frmtrm_amount"] == 40, "전기가 3개월 금액이라 비교가 어긋납니다"
+    assert line["bfefrmtrm_amount"] is None, "중간보고서에는 전전기가 없습니다"
+
+
+def test_explicit_year_still_collects_a_single_report(client, periodic, monkeypatch):
+    asked = []
+    monkeypatch.setattr(dart_client, "fetch_financials",
+                        lambda c, y, fs_div="CFS", reprt_code=None:
+                        (asked.append((y, reprt_code)) or
+                         [_annual_row("BS", "자산총계", 1, "1", "1", "1")]))
+
+    created = client.post(f"{PREFIX}/companies",
+                          json={"corp_code": "00141307", "audit_year": 2026}).json()
+    r = client.post(f"{PREFIX}/companies/{created['id']}/financials",
+                    params={"bsns_year": 2023})
+    assert r.status_code == 200, r.text
+    assert {y for y, _ in asked} == {2023}
+
+
+def test_financials_survive_a_failed_disclosure_list(client, monkeypatch):
+    """목록 조회가 막혀도 사업보고서까지 잃어서는 안 된다."""
+    monkeypatch.setattr(dart_client, "fetch_company",
+                        lambda code: {"corp_name": "회사", "acc_mt": "12"})
+
+    def boom(*a, **k):
+        raise dart_client.DartError("020")
+
+    monkeypatch.setattr(dart_client, "fetch_disclosure_list", boom)
+    monkeypatch.setattr(dart_client, "fetch_financials",
+                        lambda c, y, fs_div="CFS", reprt_code=None:
+                        [_annual_row("BS", "자산총계", 1, "100", "90", "80")])
+
+    created = client.post(f"{PREFIX}/companies",
+                          json={"corp_code": "00000002", "audit_year": 2026}).json()
+    r = client.post(f"{PREFIX}/companies/{created['id']}/financials")
+
+    assert r.status_code == 200, r.text
+    assert r.json()["bsns_year"] == 2025
+
+
+def test_the_annual_and_the_latest_interim_documents_are_both_fetched(client, monkeypatch):
+    """사업보고서 주석은 완전하지만 기말에 멈춰 있고, 중간보고서는 그 반대다."""
+    created = _register(client, monkeypatch)
+    monkeypatch.setattr(dart_client, "fetch_disclosure_list", lambda *a, **k: [
+        _annual("2", "반기보고서 (2026.06)", "20260814"),
+        _annual("1", "사업보고서 (2025.12)", "20260310"),
+        _annual("3", "분기보고서 (2026.03)", "20260515"),
+    ])
+    from app.crawler import dart_document
+    fetched = []
+    monkeypatch.setattr(dart_document, "fetch_document",
+                        lambda rcept_no: (fetched.append(rcept_no) or
+                                          {f"{rcept_no}.xml": "<DOCUMENT/>"}))
+
+    body = client.post(f"{PREFIX}/companies/{created['id']}/sections").json()
+
+    assert set(fetched) == {"1", "2"}, "반기가 최신인데 분기를 받았습니다"
+    assert body["rcept_no"] == "1", "요약의 대표는 사업보고서다"
+    labels = {r["report_label"] for r in body["reports"]}
+    assert labels == {"사업보고서", "반기보고서"}
+
+
+def test_interim_sections_are_tagged_with_their_report(client, monkeypatch):
+    """어느 보고서에서 온 구간인지 알아야 화면에서 탭을 가를 수 있다."""
+    created = _register(client, monkeypatch)
+    monkeypatch.setattr(dart_client, "fetch_disclosure_list", lambda *a, **k: [
+        _annual("2", "반기보고서 (2026.06)", "20260814"),
+        _annual("1", "사업보고서 (2025.12)", "20260310"),
+    ])
+    from app.crawler import dart_document
+    monkeypatch.setattr(dart_document, "fetch_document", lambda rcept_no: {
+        f"{rcept_no}.xml":
+            "<DOCUMENT><DOCUMENT-NAME>보고서</DOCUMENT-NAME><BODY>"
+            "<SECTION-1><TITLE>III. 재무에 관한 사항</TITLE>"
+            "<SECTION-2><TITLE>3. 재고자산</TITLE><P>내용</P></SECTION-2>"
+            "</SECTION-1></BODY></DOCUMENT>",
+    })
+
+    client.post(f"{PREFIX}/companies/{created['id']}/sections")
+    rows = client.get(f"{PREFIX}/companies/{created['id']}/sections").json()
+
+    by_report = {r["report_label"] for r in rows}
+    assert by_report == {"사업보고서", "반기보고서"}
+
+    half = client.get(f"{PREFIX}/companies/{created['id']}/sections",
+                      params={"reprt_code": "11012"}).json()
+    assert half and all(r["report_label"] == "반기보고서" for r in half)
+
+
+def test_recollecting_sections_does_not_duplicate_either_report(client, monkeypatch):
+    created = _register(client, monkeypatch)
+    monkeypatch.setattr(dart_client, "fetch_disclosure_list", lambda *a, **k: [
+        _annual("2", "반기보고서 (2026.06)", "20260814"),
+        _annual("1", "사업보고서 (2025.12)", "20260310"),
+    ])
+    from app.crawler import dart_document
+    monkeypatch.setattr(dart_document, "fetch_document", lambda rcept_no: {
+        f"{rcept_no}.xml":
+            "<DOCUMENT><BODY><SECTION-1><TITLE>재고자산</TITLE>"
+            "<P>내용</P></SECTION-1></BODY></DOCUMENT>",
+    })
+
+    first = client.post(f"{PREFIX}/companies/{created['id']}/sections").json()
+    again = client.post(f"{PREFIX}/companies/{created['id']}/sections").json()
+
+    assert first["total_sections"] == again["total_sections"]
+    rows = client.get(f"{PREFIX}/companies/{created['id']}/sections").json()
+    assert len(rows) == again["total_sections"]

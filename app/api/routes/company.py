@@ -31,9 +31,11 @@ from app.schemas.company import (
     FinancialLine,
     FinancialsCollected,
     FinancialsSummary,
+    ReportCollected,
     NewsLine,
     NewsSummary,
     SectionLine,
+    SectionsCollected,
     SectionsSummary,
 )
 from app.core.config import settings
@@ -136,77 +138,143 @@ def delete_company(company_id: int, db: Session = Depends(get_db)):
 def collect_financials(
     company_id: int,
     bsns_year: Optional[int] = None,
+    reprt_code: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
-    """사업보고서 재무제표를 수집한다 — 한 번에 3개년이 들어온다.
+    """재무제표를 수집한다 — **전기말 사업보고서 + 당기중 최신 분·반기보고서**.
 
-    bsns_year 를 주지 않으면 감사대상연도의 직전 연도를 쓴다. 감사대상연도의
-    사업보고서는 아직 공시되지 않았기 때문이다.
+    사업보고서는 한 번에 3개년을 주고 주석도 완전하지만, 기말 시점에 멈춰
+    있다. 기말감사 위험평가는 지금 상태를 봐야 하므로 최신 중간보고서를
+    함께 받는다. 어느 쪽도 다른 쪽을 대신하지 못한다.
+
+    bsns_year 를 직접 주면 그 한 건만 받는다 (reprt_code 기본값은 사업보고서).
     """
     company = db.query(Company).filter(Company.id == company_id).first()
     if not company:
         raise HTTPException(status_code=404, detail="회사를 찾을 수 없습니다.")
 
-    year = bsns_year or ((company.audit_year or 0) - 1)
-    if year < 2015:
-        raise HTTPException(
-            status_code=400, detail="DART 재무제표는 2015년 이후만 제공됩니다."
+    if bsns_year:
+        targets = [{
+            "bsns_year": bsns_year,
+            "reprt_code": reprt_code or dart_client.REPRT_ANNUAL,
+            "report_label": dart_client.REPRT_LABELS.get(
+                reprt_code or dart_client.REPRT_ANNUAL, "보고서"),
+            "period_end": None,
+        }]
+    else:
+        try:
+            targets = _target_reports(db, company)
+        except HTTPException as e:
+            # 공시 목록을 못 받아도 사업보고서는 연도로 계산할 수 있다. 중간보고서만
+            # 포기하고 나머지는 그대로 받는다 — 목록 조회 실패로 전부 잃지 않는다.
+            logger.warning(f"정기보고서 목록을 받지 못했습니다: {e.detail}")
+            targets = []
+
+        if not targets:
+            targets = [{
+                "bsns_year": (company.audit_year or 0) - 1,
+                "reprt_code": dart_client.REPRT_ANNUAL,
+                "report_label": "사업보고서",
+                "period_end": None,
+            }]
+
+    for target in targets:
+        if target["bsns_year"] < 2015:
+            raise HTTPException(
+                status_code=400, detail="DART 재무제표는 2015년 이후만 제공됩니다."
+            )
+
+    reports: list[ReportCollected] = []
+    for target in targets:
+        year, code = target["bsns_year"], target["reprt_code"]
+
+        divisions = _dart_call(
+            dart_client.fetch_all_divisions, company.corp_code, year, code
         )
+        if not divisions:
+            logger.info(f"{year}년 {target['report_label']} 재무제표 없음")
+            continue
 
-    divisions = _dart_call(dart_client.fetch_all_divisions, company.corp_code, year)
-    if not divisions:
-        raise HTTPException(
-            status_code=404,
-            detail=f"{year}년 사업보고서 재무제표가 없습니다. 공시 여부를 확인하세요.",
-        )
+        # 같은 (연도, 보고서)를 다시 수집하면 교체한다 (연결·별도 모두).
+        # reprt_code 를 빼면 같은 해의 반기와 3분기가 서로를 지운다.
+        db.query(FinancialStatement).filter(
+            FinancialStatement.company_id == company.id,
+            FinancialStatement.bsns_year == year,
+            FinancialStatement.reprt_code == code,
+        ).delete()
 
-    # 같은 연도를 다시 수집하면 교체한다 (연결·별도 모두)
-    db.query(FinancialStatement).filter(
-        FinancialStatement.company_id == company.id,
-        FinancialStatement.bsns_year == year,
-    ).delete()
+        annual = code == dart_client.REPRT_ANNUAL
+        collected = []
+        for fs_div, rows in divisions.items():
+            counts: Counter = Counter()
+            for row in rows:
+                sj_div = row.get("sj_div", "")
+                counts[sj_div] += 1
+                db.add(FinancialStatement(
+                    company_id=company.id,
+                    bsns_year=year,
+                    reprt_code=code,
+                    fs_div=fs_div,
+                    sj_div=sj_div,
+                    sj_nm=row.get("sj_nm"),
+                    account_id=row.get("account_id"),
+                    account_nm=row.get("account_nm"),
+                    account_detail=row.get("account_detail"),
+                    ord=_as_int(row.get("ord")),
+                    currency=row.get("currency"),
+                    thstrm_nm=row.get("thstrm_nm"),
+                    # 분기·반기 손익은 누적으로 맞춰 읽는다. 당기만 누적으로
+                    # 읽고 전기를 3개월로 읽으면 전년 동기 대비가 어긋난다.
+                    thstrm_amount=dart_client.current_amount(row),
+                    frmtrm_amount=dart_client.prior_amount(row),
+                    # 전전기는 사업보고서에만 있는 키다. 없으면 None 으로 둔다.
+                    bfefrmtrm_amount=(
+                        dart_client.parse_amount(row.get("bfefrmtrm_amount"))
+                        if annual else None
+                    ),
+                ))
 
-    collected = []
-    for fs_div, rows in divisions.items():
-        counts: Counter = Counter()
-        for row in rows:
-            sj_div = row.get("sj_div", "")
-            counts[sj_div] += 1
-            db.add(FinancialStatement(
-                company_id=company.id,
-                bsns_year=year,
-                reprt_code=dart_client.REPRT_ANNUAL,
+            collected.append(FinancialsCollected(
                 fs_div=fs_div,
-                sj_div=sj_div,
-                sj_nm=row.get("sj_nm"),
-                account_id=row.get("account_id"),
-                account_nm=row.get("account_nm"),
-                account_detail=row.get("account_detail"),
-                ord=_as_int(row.get("ord")),
-                currency=row.get("currency"),
-                thstrm_nm=row.get("thstrm_nm"),
-                thstrm_amount=dart_client.current_amount(row),
-                frmtrm_amount=dart_client.prior_amount(row),
-                # 사업보고서에만 있는 키다. 없으면 None 으로 둔다.
-                bfefrmtrm_amount=dart_client.parse_amount(row.get("bfefrmtrm_amount")),
+                label=dart_client.FS_DIV_LABELS[fs_div],
+                total_rows=len(rows),
+                by_statement=dict(counts),
             ))
 
-        collected.append(FinancialsCollected(
-            fs_div=fs_div,
-            label=dart_client.FS_DIV_LABELS[fs_div],
-            total_rows=len(rows),
-            by_statement=dict(counts),
+        reports.append(ReportCollected(
+            bsns_year=year, reprt_code=code,
+            report_label=target["report_label"],
+            period_end=target.get("period_end"),
+            collected=collected,
         ))
+
+    if not reports:
+        raise HTTPException(
+            status_code=404,
+            detail="재무제표를 찾지 못했습니다. 공시 여부를 확인하세요.",
+        )
 
     db.commit()
 
-    parts = [f"{c.label} {c.total_rows}행" for c in collected]
-    missing = "" if len(collected) == 2 else " (다른 구분은 공시되지 않았습니다)"
+    lines = []
+    for r in reports:
+        parts = " · ".join(f"{c.label} {c.total_rows}행" for c in r.collected)
+        span = "당기·전기·전전기" if r.reprt_code == dart_client.REPRT_ANNUAL \
+            else "당기 누적·전년 동기"
+        period = f" {r.period_end}" if r.period_end else ""
+        missing = "" if len(r.collected) == 2 else " · 다른 구분은 공시되지 않았습니다"
+        lines.append(
+            f"{r.bsns_year}년 {r.report_label}{period} — {parts} ({span}{missing})"
+        )
+
+    annual_report = next(
+        (r for r in reports if r.reprt_code == dart_client.REPRT_ANNUAL), reports[0]
+    )
     return FinancialsSummary(
-        bsns_year=year,
-        collected=collected,
-        message=f"{year}년 재무제표 수집 — {' · '.join(parts)}"
-                f" · 당기·전기·전전기 포함{missing}",
+        bsns_year=annual_report.bsns_year,
+        reports=reports,
+        collected=annual_report.collected,
+        message="재무제표 수집 — " + " / ".join(lines),
     )
 
 
@@ -214,6 +282,7 @@ def collect_financials(
 def list_financials(
     company_id: int,
     bsns_year: Optional[int] = None,
+    reprt_code: Optional[str] = None,
     fs_div: Optional[str] = None,
     sj_div: Optional[str] = None,
     db: Session = Depends(get_db),
@@ -221,11 +290,14 @@ def list_financials(
     q = db.query(FinancialStatement).filter(FinancialStatement.company_id == company_id)
     if bsns_year:
         q = q.filter(FinancialStatement.bsns_year == bsns_year)
+    if reprt_code:
+        q = q.filter(FinancialStatement.reprt_code == reprt_code)
     if fs_div:
         q = q.filter(FinancialStatement.fs_div == fs_div)
     if sj_div:
         q = q.filter(FinancialStatement.sj_div == sj_div)
     return q.order_by(
+        FinancialStatement.bsns_year.desc(), FinancialStatement.reprt_code,
         FinancialStatement.fs_div, FinancialStatement.sj_div, FinancialStatement.ord
     ).all()
 
@@ -586,37 +658,85 @@ def collect_sections(
     rcept_no: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
-    """사업보고서 원문을 받아 목차 단위로 쪼개 저장한다.
+    """보고서 원문을 받아 목차 단위로 쪼개 저장한다.
 
     재무제표 API 가 주지 않는 주석과 회사 기재 내용이 여기 있다 —
     특수관계자 거래, 우발부채, 핵심감사사항 등.
 
+    **전기말 사업보고서와 당기중 최신 분·반기보고서를 함께 받는다.**
+    중간보고서 주석은 K-IFRS 1034 에 따라 '직전 연차보고서 이후의 변동'만
+    담은 요약본이라 사업보고서를 대체하지 못한다. 대신 기말 이후 무엇이
+    달라졌는지는 여기서만 나온다. 첨부도 다르다 — 사업보고서에는 감사보고서가,
+    중간보고서에는 검토보고서가 붙는다.
+
     본문만 8MB 가 넘으므로 통째로 두지 않고 목차로 나눈다. 분석 때는
     필요한 구간만 골라 읽는다.
 
-    rcept_no 를 주지 않으면 수집해 둔 주요정보에서 가장 최근 사업보고서를 찾는다.
+    rcept_no 를 주면 그 보고서 하나만 받는다.
     """
     company = db.query(Company).filter(Company.id == company_id).first()
     if not company:
         raise HTTPException(status_code=404, detail="회사를 찾을 수 없습니다.")
 
-    target, year, report_nm = rcept_no, None, None
-    if not target:
-        target, year, report_nm = _latest_annual_report(db, company)
-    if not target:
+    if rcept_no:
+        targets = [{
+            "rcept_no": rcept_no, "bsns_year": None, "report_nm": None,
+            "reprt_code": None, "report_label": "보고서",
+        }]
+    else:
+        targets = _target_reports(db, company)
+
+    if not targets:
         raise HTTPException(
             status_code=404,
-            detail="사업보고서를 찾지 못했습니다. 공시된 사업보고서가 있는지 "
+            detail="정기보고서를 찾지 못했습니다. 공시된 사업보고서가 있는지 "
                    "확인하거나 rcept_no 를 직접 지정해주세요.",
         )
 
-    documents = _dart_call(dart_document.fetch_document, target)
+    reports: list[SectionsCollected] = []
+    for target in targets:
+        reports.append(_ingest_report_document(db, company, target))
+
+    db.commit()
+
+    lines = [
+        f"{r.report_label} {r.total_sections}개 구간(감사 관련 {r.audit_relevant})"
+        for r in reports
+    ]
+    documents: dict[str, int] = {}
+    for r in reports:
+        for label, count in r.documents.items():
+            documents[label] = documents.get(label, 0) + count
+
+    primary = next(
+        (r for r in reports if r.report_label == "사업보고서"), reports[0]
+    )
+    return SectionsSummary(
+        rcept_no=primary.rcept_no,
+        bsns_year=primary.bsns_year,
+        report_nm=primary.report_nm,
+        reports=reports,
+        documents=documents,
+        total_sections=sum(r.total_sections for r in reports),
+        audit_relevant=sum(r.audit_relevant for r in reports),
+        total_chars=sum(r.total_chars for r in reports),
+        message="원문 수집 — " + " / ".join(lines) +
+                f" · 전체 {sum(r.total_chars for r in reports):,}자",
+    )
+
+
+def _ingest_report_document(
+    db: Session, company: Company, target: dict
+) -> SectionsCollected:
+    """보고서 한 건의 원문을 받아 구간으로 저장한다."""
+    rcept_no = target["rcept_no"]
+    documents = _dart_call(dart_document.fetch_document, rcept_no)
     if not documents:
         raise HTTPException(status_code=404, detail="원문에 XML 이 없습니다.")
 
     db.query(ReportSection).filter(
         ReportSection.company_id == company.id,
-        ReportSection.rcept_no == target,
+        ReportSection.rcept_no == rcept_no,
     ).delete(synchronize_session=False)
 
     per_document: dict[str, int] = {}
@@ -625,7 +745,7 @@ def collect_sections(
     labels = dart_document.document_labels(documents)
 
     # ZIP 엔트리 순서는 첨부가 먼저 오기도 한다. 본문을 앞에 둬야 화면에서
-    # 처음 열리는 탭이 사업보고서 본문이 된다.
+    # 처음 열리는 탭이 보고서 본문이 된다.
     ordered = sorted(documents.items(), key=lambda kv: ("_" in kv[0], kv[0]))
 
     for filename, xml_text in ordered:
@@ -641,23 +761,25 @@ def collect_sections(
             total_chars += s["chars"]
             relevant += 1 if s["audit_relevant"] else 0
             db.add(ReportSection(
-                company_id=company.id, rcept_no=target, doc_label=label,
-                bsns_year=year, level=s["level"], title=s["title"],
+                company_id=company.id, rcept_no=rcept_no, doc_label=label,
+                bsns_year=target.get("bsns_year"),
+                reprt_code=target.get("reprt_code"),
+                report_nm=target.get("report_nm"),
+                level=s["level"], title=s["title"],
                 parent=s["parent"], section_no=s["section_no"],
                 body=s["body"] or None, chars=s["chars"],
                 audit_relevant=s["audit_relevant"],
             ))
 
-    db.commit()
-    total = sum(per_document.values())
-
-    label = report_nm or (f"{year}년 사업보고서" if year else "사업보고서")
-    return SectionsSummary(
-        rcept_no=target, bsns_year=year, report_nm=report_nm,
-        documents=per_document, total_sections=total,
-        audit_relevant=relevant, total_chars=total_chars,
-        message=f"{label} 원문 {total}개 구간 저장 — 감사 관련 {relevant}개 "
-                f"· 전체 {total_chars:,}자 (접수번호 {target})",
+    return SectionsCollected(
+        rcept_no=rcept_no,
+        bsns_year=target.get("bsns_year"),
+        report_nm=target.get("report_nm"),
+        report_label=target.get("report_label"),
+        documents=per_document,
+        total_sections=sum(per_document.values()),
+        audit_relevant=relevant,
+        total_chars=total_chars,
     )
 
 
@@ -666,6 +788,7 @@ def list_sections(
     company_id: int,
     audit_only: bool = False,
     level: Optional[int] = None,
+    reprt_code: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
     """목차만 돌려준다. 본문은 무거워 별도 조회로 뺀다."""
@@ -674,6 +797,8 @@ def list_sections(
         q = q.filter(ReportSection.audit_relevant.is_(True))
     if level:
         q = q.filter(ReportSection.level == level)
+    if reprt_code:
+        q = q.filter(ReportSection.reprt_code == reprt_code)
     return q.order_by(ReportSection.id).all()
 
 
@@ -698,16 +823,80 @@ def get_section(company_id: int, section_id: int, db: Session = Depends(get_db))
 ANNUAL_REPORT_NAME = re.compile(r"사업보고서\s*\((\d{4})[.\s]")
 
 
-def _latest_annual_report(
-    db: Session, company: Company
-) -> tuple[Optional[str], Optional[int], Optional[str]]:
-    """가장 최근 사업보고서의 (접수번호, 사업연도, 보고서명) 을 찾는다.
+def _fiscal_month(company: Company) -> int:
+    """결산월. 문자열로 저장돼 있고 비어 있을 수도 있다."""
+    try:
+        month = int(str(company.fiscal_month or "").strip())
+    except ValueError:
+        return 12
+    return month if 1 <= month <= 12 else 12
 
-    이미 받아둔 주요정보에서 먼저 본다 — 주요정보는 사업보고서에서 뽑은 것이라
-    payload 의 rcept_no 가 곧 사업보고서 접수번호이고, 호출이 들지 않는다.
 
-    없으면 DART 공시 목록(정기공시 A)에서 직접 찾는다. 그래야 주요정보를
-    수집하지 않은 상태에서도 원문을 받을 수 있다 — 수집 순서에 매이지 않는다.
+def _periodic_reports(company: Company) -> list[dict]:
+    """정기공시(A) 목록에서 정기보고서를 접수일 역순으로 읽는다.
+
+    **이 목록이 곧 그 회사의 공시 주기다.** 분기보고서를 내는 회사인지
+    반기만 내는 회사인지 따로 판정할 필요가 없다 — 낸 것만 여기 있다.
+
+    [기재정정] 본은 같은 보고서의 최신본이므로 접수일이 늦은 쪽이 앞에 선다.
+    """
+    bgn_de, end_de = dart_client.fiscal_window(date.today())
+    rows = _dart_call(
+        dart_client.fetch_disclosure_list, company.corp_code, bgn_de, end_de, "A"
+    )
+
+    fiscal_month = _fiscal_month(company)
+    reports = []
+    for row in rows:
+        report_nm = row.get("report_nm", "")
+        info = dart_client.parse_periodic_report(report_nm, fiscal_month)
+        if not info or not info["reprt_code"]:
+            continue
+        reports.append({
+            **info,
+            "rcept_no": row.get("rcept_no"),
+            "rcept_dt": row.get("rcept_dt", ""),
+            "report_nm": report_nm,
+            "report_label": dart_client.REPRT_LABELS[info["reprt_code"]],
+        })
+
+    reports.sort(key=lambda r: r["rcept_dt"], reverse=True)
+    return reports
+
+
+def _target_reports(db: Session, company: Company) -> list[dict]:
+    """분석 대상 보고서 — 전기말 사업보고서와 당기중 최신 분·반기보고서.
+
+    사업보고서는 3개년 비교와 완전한 주석을 주고, 중간보고서는 지금 상태를
+    준다. 어느 한쪽으로 대신할 수 없어 둘 다 받는다. 중간보고서 주석은
+    K-IFRS 1034 에 따라 요약본이므로 사업보고서를 대체하지 않는다.
+
+    중간보고서가 사업보고서보다 먼저 나온 것이라면 이미 사업보고서에 흡수된
+    기간이므로 버린다 — 늘 '사업보고서 이후'만 의미가 있다.
+    """
+    reports = _periodic_reports(company)
+
+    annual = next(
+        (r for r in reports if r["reprt_code"] == dart_client.REPRT_ANNUAL), None
+    )
+    interim = next(
+        (r for r in reports if r["reprt_code"] != dart_client.REPRT_ANNUAL), None
+    )
+
+    if annual and interim and interim["rcept_dt"] <= annual["rcept_dt"]:
+        interim = None
+
+    if annual is None:
+        annual = _annual_from_disclosures(db, company)
+
+    return [r for r in (annual, interim) if r]
+
+
+def _annual_from_disclosures(db: Session, company: Company) -> Optional[dict]:
+    """공시 목록을 못 받았을 때의 대비책 — 받아둔 주요정보에서 사업보고서를 찾는다.
+
+    주요정보는 사업보고서에서 뽑은 것이라 payload 의 rcept_no 가 곧 사업보고서
+    접수번호다. DART 호출이 들지 않는다.
     """
     rows = (
         db.query(DisclosureItem)
@@ -718,35 +907,31 @@ def _latest_annual_report(
     for row in rows:
         rcept_no = _safe_json(row.payload).get("rcept_no") or row.rcept_no
         if rcept_no:
-            return rcept_no, row.bsns_year, None
+            return {
+                "kind": "사업",
+                "reprt_code": dart_client.REPRT_ANNUAL,
+                "report_label": "사업보고서",
+                "bsns_year": row.bsns_year,
+                "period_end": None,
+                "rcept_no": rcept_no,
+                "rcept_dt": "",
+                "report_nm": None,
+            }
+    return None
 
-    return _find_annual_report_at_dart(company)
 
-
-def _find_annual_report_at_dart(
-    company: Company,
+def _latest_annual_report(
+    db: Session, company: Company
 ) -> tuple[Optional[str], Optional[int], Optional[str]]:
-    """정기공시(A) 목록에서 가장 최근 사업보고서를 고른다.
-
-    반기·분기보고서가 섞여 오므로 보고서명으로 걸러낸다. [기재정정] 본은
-    같은 사업연도의 최신본이므로 접수일이 늦은 쪽을 택하면 자연히 잡힌다.
-    """
-    bgn_de, end_de = dart_client.fiscal_window(date.today())
-    rows = _dart_call(
-        dart_client.fetch_disclosure_list, company.corp_code, bgn_de, end_de, "A"
+    """가장 최근 사업보고서의 (접수번호, 사업연도, 보고서명). 없으면 (None, None, None)."""
+    annual = next(
+        (r for r in _target_reports(db, company)
+         if r["reprt_code"] == dart_client.REPRT_ANNUAL),
+        None,
     )
-
-    candidates = []
-    for row in rows:
-        match = ANNUAL_REPORT_NAME.search(row.get("report_nm", ""))
-        if match:
-            candidates.append((row.get("rcept_dt", ""), row, int(match.group(1))))
-
-    if not candidates:
+    if not annual:
         return None, None, None
-
-    _, row, year = max(candidates, key=lambda c: c[0])
-    return row.get("rcept_no"), year, row.get("report_nm")
+    return annual["rcept_no"], annual["bsns_year"], annual["report_nm"]
 
 
 @router.post("/companies/{company_id}/sections/retag")

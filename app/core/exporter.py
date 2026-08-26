@@ -74,6 +74,33 @@ def _overview(company: Company) -> list[str]:
     ]
 
 
+def _report_groups(rows: list) -> list[tuple]:
+    """(사업연도, 보고서코드) 로 묶어 사업보고서를 먼저 둔다.
+
+    전기말 사업보고서와 당기중 분·반기보고서를 함께 담으므로, 섞어 놓으면
+    같은 계정이 두 번 나와 어느 시점 값인지 알 수 없게 된다.
+    """
+    from app.crawler.dart_client import REPRT_ANNUAL, REPRT_LABELS
+
+    groups: dict[tuple, list] = {}
+    for r in rows:
+        groups.setdefault((r.bsns_year, r.reprt_code or REPRT_ANNUAL), []).append(r)
+
+    def order(key):
+        year, code = key
+        return (0 if code == REPRT_ANNUAL else 1, -(year or 0))
+
+    return [
+        (year, code, REPRT_LABELS.get(code, "보고서"), groups[(year, code)])
+        for year, code in sorted(groups, key=order)
+    ]
+
+
+def _is_annual(reprt_code) -> bool:
+    from app.crawler.dart_client import REPRT_ANNUAL
+    return (reprt_code or REPRT_ANNUAL) == REPRT_ANNUAL
+
+
 def _financials(db: Session, company: Company) -> list[str]:
     rows = (
         db.query(FinancialStatement)
@@ -85,24 +112,41 @@ def _financials(db: Session, company: Company) -> list[str]:
     if not rows:
         return ["## 재무제표", "", "수집되지 않았습니다.", ""]
 
-    year = rows[0].bsns_year
-    out = ["## 재무제표 주요 계정", "", f"사업연도 {year} · 단위 원", ""]
+    out = ["## 재무제표 주요 계정", ""]
 
-    for fs_div, label in (("CFS", "연결"), ("OFS", "별도")):
-        picked = [r for r in rows if r.fs_div == fs_div and _is_key(r.account_nm)]
-        if not picked:
-            continue
+    for year, code, report_label, group in _report_groups(rows):
+        annual = _is_annual(code)
+        if annual:
+            columns = "| 재무제표 | 계정 | 당기 | 전기 | 전전기 |"
+            divider = "|---|---|---:|---:|---:|"
+            note = "기말 확정치 · 3개년"
+        else:
+            columns = "| 재무제표 | 계정 | 당기 누적 | 전년 동기 |"
+            divider = "|---|---|---:|---:|"
+            note = "**검토 대상 · 감사받지 않은 수치** · 손익은 누적 기준"
 
-        out += [f"### {label}재무제표", "",
-                "| 재무제표 | 계정 | 당기 | 전기 | 전전기 |",
-                "|---|---|---:|---:|---:|"]
-        for r in picked:
-            out.append(
-                f"| {STATEMENT_LABELS.get(r.sj_div, r.sj_div)} | {r.account_nm} "
-                f"| {_won(r.thstrm_amount)} | {_won(r.frmtrm_amount)} "
-                f"| {_won(r.bfefrmtrm_amount)} |"
-            )
-        out.append("")
+        out += [f"### {year}년 {report_label}", "", f"{note} · 단위 원", ""]
+
+        for fs_div, label in (("CFS", "연결"), ("OFS", "별도")):
+            picked = [r for r in group if r.fs_div == fs_div and _is_key(r.account_nm)]
+            if not picked:
+                continue
+
+            out += [f"#### {label}재무제표", "", columns, divider]
+            for r in picked:
+                third = f" {_won(r.bfefrmtrm_amount)} |" if annual else ""
+                out.append(
+                    f"| {STATEMENT_LABELS.get(r.sj_div, r.sj_div)} | {r.account_nm} "
+                    f"| {_won(r.thstrm_amount)} | {_won(r.frmtrm_amount)} |{third}"
+                )
+            out.append("")
+
+    if any(not _is_annual(code) for _, code, _, _ in _report_groups(rows)):
+        out += [
+            "> 중간보고서 수치는 **검토(review)** 를 거친 것이지 감사받은 것이 아니다.",
+            "> 위험평가의 근거로는 쓰되 감사증거로 삼지 말 것.",
+            "",
+        ]
 
     out += ["전 계정은 `01_financials/재무제표_전체.md` 에 있습니다.", ""]
     return out
@@ -196,7 +240,7 @@ def _news(db: Session, company: Company) -> list[str]:
 
 
 def _report_sections(db: Session, company: Company) -> list[str]:
-    """사업보고서 원문의 목차. 본문은 담지 않는다 — 8MB 가 넘는다."""
+    """보고서 원문의 목차. 본문은 담지 않는다 — 8MB 가 넘는다."""
     rows = (
         db.query(ReportSection)
         .filter(ReportSection.company_id == company.id,
@@ -208,14 +252,32 @@ def _report_sections(db: Session, company: Company) -> list[str]:
     if not rows:
         return []
 
-    out = ["## 사업보고서 원문 — 감사 관련 구간", "",
-           f"{len(rows)}개 구간. 본문은 `report_sections.body` 에 있다.", "",
-           "| 구간 | 상위 | 분량 |", "|---|---|---:|"]
-    for r in rows[:40]:
-        out.append(f"| {r.title} | {r.parent or '–'} | {r.chars:,}자 |")
-    if len(rows) > 40:
-        out.append(f"| … 외 {len(rows) - 40}개 | | |")
-    out.append("")
+    from app.crawler.dart_client import REPRT_ANNUAL
+
+    groups: dict[str, list] = {}
+    for r in rows:
+        groups.setdefault(r.reprt_code or REPRT_ANNUAL, []).append(r)
+
+    out = ["## 보고서 원문 — 감사 관련 구간", "",
+           f"{len(rows)}개 구간. 본문은 `report_sections.body` 에 있다.", ""]
+
+    for code in sorted(groups, key=lambda c: (c != REPRT_ANNUAL, c)):
+        picked = groups[code]
+        label = picked[0].report_label
+        out += [f"### {label}", "",
+                "| 구간 | 상위 | 분량 |", "|---|---|---:|"]
+        for r in picked[:40]:
+            out.append(f"| {r.title} | {r.parent or '–'} | {r.chars:,}자 |")
+        if len(picked) > 40:
+            out.append(f"| … 외 {len(picked) - 40}개 | | |")
+        out.append("")
+
+    if len(groups) > 1:
+        out += [
+            "> 중간보고서 주석은 K-IFRS 1034 에 따라 **직전 연차보고서 이후의 변동만**",
+            "> 담은 요약본이다. 전체 명세는 사업보고서 쪽을 봐야 한다.",
+            "",
+        ]
     return out
 
 
@@ -278,9 +340,21 @@ def _how_to_dig_deeper() -> list[str]:
         "-- 미분류 공시까지 포함한 전체",
         "SELECT rcept_dt, report_nm, tag FROM disclosure_filings ORDER BY rcept_dt DESC;",
         "",
-        "-- 사업보고서 주석 본문 (특수관계자·우발부채 등)",
-        "SELECT title, body FROM report_sections WHERE title LIKE '%특수관계자%';",
+        "-- 보고서 주석 본문 (특수관계자·우발부채 등)",
+        "--   reprt_code 11011=사업 11012=반기 11013=1분기 11014=3분기",
+        "--   두 보고서가 함께 들어 있으므로 섞어 읽지 말 것",
+        "SELECT reprt_code, title, body FROM report_sections",
+        " WHERE title LIKE '%특수관계자%';",
+        "",
+        "-- 기말 이후 무엇이 달라졌는지 (같은 계정을 보고서별로 나란히)",
+        "SELECT account_nm, bsns_year, reprt_code, thstrm_amount, frmtrm_amount",
+        "  FROM financial_statements",
+        " WHERE fs_div = 'CFS' AND account_nm = '자산총계'",
+        " ORDER BY bsns_year, reprt_code;",
         "```",
+        "",
+        "> 분·반기 수치는 **검토만 거친 것**이고 손익은 누적 기준이다.",
+        "> 사업보고서 금액(연간)과 그대로 견주면 어긋난다.",
         "",
         "`raw_text` 는 건당 수만 자다. 필요한 건만 골라 읽을 것.",
         "",
@@ -307,20 +381,28 @@ def _financials_detail(db: Session, company: Company) -> str:
     if not rows:
         return "\n".join(out + ["수집되지 않았습니다.", ""])
 
-    out += [f"사업연도 {rows[0].bsns_year} · 단위 원", ""]
-    current = None
-    for r in rows:
-        key = (r.fs_div, r.sj_div)
-        if key != current:
-            current = key
-            label = "연결" if r.fs_div == "CFS" else "별도"
-            out += ["", f"## {label} · {STATEMENT_LABELS.get(r.sj_div, r.sj_div)}", "",
-                    "| 계정 | 당기 | 전기 | 전전기 |", "|---|---:|---:|---:|"]
-        name = r.account_nm or ""
-        if r.account_detail:
-            name += f" · {r.account_detail}"
-        out.append(f"| {name} | {_won(r.thstrm_amount)} | {_won(r.frmtrm_amount)} "
-                   f"| {_won(r.bfefrmtrm_amount)} |")
+    for year, code, report_label, group in _report_groups(rows):
+        annual = _is_annual(code)
+        out += ["", f"# {year}년 {report_label}", "",
+                ("기말 확정치 · 단위 원" if annual
+                 else "검토 대상(감사받지 않음) · 손익은 누적 기준 · 단위 원"), ""]
+
+        current = None
+        for r in group:
+            key = (r.fs_div, r.sj_div)
+            if key != current:
+                current = key
+                label = "연결" if r.fs_div == "CFS" else "별도"
+                out += ["", f"## {label} · {STATEMENT_LABELS.get(r.sj_div, r.sj_div)}", "",
+                        ("| 계정 | 당기 | 전기 | 전전기 |" if annual
+                         else "| 계정 | 당기 누적 | 전년 동기 |"),
+                        "|---|---:|---:|---:|" if annual else "|---|---:|---:|"]
+            name = r.account_nm or ""
+            if r.account_detail:
+                name += f" · {r.account_detail}"
+            third = f" {_won(r.bfefrmtrm_amount)} |" if annual else ""
+            out.append(f"| {name} | {_won(r.thstrm_amount)} "
+                       f"| {_won(r.frmtrm_amount)} |{third}")
 
     return "\n".join(out) + "\n"
 

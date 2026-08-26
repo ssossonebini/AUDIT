@@ -97,3 +97,73 @@ def test_dart_error_carries_a_readable_message():
 
 def test_dart_error_falls_back_for_unknown_status():
     assert "알 수 없는 오류" in str(dc.DartError("999"))
+
+
+# ── 정기보고서 이름 읽기 ────────────────────────────────────────────
+#
+# 「분기보고서」는 1분기와 3분기가 같은 이름을 쓴다. 괄호 안의 기간 종료월로만
+# 갈린다. 이 목록이 곧 그 회사의 공시 주기이므로, 분기를 내는 회사인지 따로
+# 판정할 필요가 없다.
+
+def test_annual_report_name_is_read():
+    got = dc.parse_periodic_report("사업보고서 (2025.12)")
+    assert got["reprt_code"] == dc.REPRT_ANNUAL
+    assert got["bsns_year"] == 2025
+
+
+def test_half_year_report_name_is_read():
+    got = dc.parse_periodic_report("반기보고서 (2026.06)")
+    assert got["reprt_code"] == dc.REPRT_HALF
+    assert got["bsns_year"] == 2026
+
+
+def test_the_two_quarters_are_told_apart_by_their_closing_month():
+    q1 = dc.parse_periodic_report("분기보고서 (2026.03)")
+    q3 = dc.parse_periodic_report("분기보고서 (2026.09)")
+    assert q1["reprt_code"] == dc.REPRT_Q1
+    assert q3["reprt_code"] == dc.REPRT_Q3
+
+
+def test_a_corrected_filing_is_still_recognised():
+    got = dc.parse_periodic_report("[기재정정]사업보고서 (2025.12)")
+    assert got["reprt_code"] == dc.REPRT_ANNUAL
+
+
+def test_a_march_year_end_shifts_every_quarter():
+    """3월 결산의 1분기는 6월에 끝난다. 달만 보고 판정하면 어긋난다."""
+    q1 = dc.parse_periodic_report("분기보고서 (2026.06)", fiscal_month=3)
+    q3 = dc.parse_periodic_report("분기보고서 (2025.12)", fiscal_month=3)
+    half = dc.parse_periodic_report("반기보고서 (2026.09)", fiscal_month=3)
+
+    assert q1["reprt_code"] == dc.REPRT_Q1
+    assert q3["reprt_code"] == dc.REPRT_Q3
+    assert half["reprt_code"] == dc.REPRT_HALF
+
+
+def test_a_year_that_straddles_two_calendar_years_uses_the_opening_year():
+    """3월 결산의 「사업보고서 (2026.03)」은 사업연도 2025다."""
+    got = dc.parse_periodic_report("사업보고서 (2026.03)", fiscal_month=3)
+    assert got["bsns_year"] == 2025
+
+
+def test_non_periodic_filings_are_not_mistaken_for_reports():
+    for name in ("감사보고서제출", "주요사항보고서(자기주식취득결정)",
+                 "회계처리기준 위반에 따른 임원의 해임권고 조치"):
+        assert dc.parse_periodic_report(name) is None, name
+
+
+# ── 분기 금액 필드 ──────────────────────────────────────────────────
+
+def test_prior_period_uses_the_same_basis_as_the_current_one():
+    """당기를 누적으로 읽고 전기를 3개월로 읽으면 전년 동기 대비가 어긋난다."""
+    row = {"thstrm_amount": "10", "thstrm_add_amount": "50",
+           "frmtrm_q_amount": "20", "frmtrm_add_amount": "40"}
+
+    assert dc.current_amount(row) == 50
+    assert dc.prior_amount(row) == 40, "전기가 3개월 금액입니다"
+
+
+def test_the_annual_report_is_unaffected_by_the_cumulative_rule():
+    row = {"thstrm_amount": "100", "frmtrm_amount": "90", "bfefrmtrm_amount": "80"}
+    assert dc.current_amount(row) == 100
+    assert dc.prior_amount(row) == 90

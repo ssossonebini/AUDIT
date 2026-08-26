@@ -14,6 +14,14 @@ const DIVISIONS = [
   { key: 'OFS', label: '별도' },
 ]
 
+// 보고서 종류. 사업보고서는 기말 확정치, 나머지는 검토만 거친 중간 수치다.
+const REPORTS = {
+  '11011': '사업보고서',
+  '11012': '반기보고서',
+  '11013': '1분기보고서',
+  '11014': '3분기보고서',
+}
+
 const STATEMENTS = [
   { key: 'BS',  label: '재무상태표' },
   { key: 'IS',  label: '손익계산서' },
@@ -32,6 +40,7 @@ export default function CompanyDetail({ companyId, onBack }) {
   const [section, setSection] = useState('fs')   // 'fs' | 'disc'
   const [sjDiv, setSjDiv]     = useState('BS')
   const [fsDiv, setFsDiv]     = useState('CFS')
+  const [report, setReport]   = useState(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -51,9 +60,27 @@ export default function CompanyDetail({ companyId, onBack }) {
   if (loading) return <div style={center}>불러오는 중...</div>
   if (!company) return <div style={center}>회사를 찾을 수 없습니다.</div>
 
-  const divisions = DIVISIONS.filter(d => lines.some(l => l.fs_div === d.key))
+  // 전기말 사업보고서와 당기중 분·반기보고서가 함께 담긴다. 섞어 보면 같은
+  // 계정이 두 번 나오므로 먼저 보고서로 가른다.
+  const reports = []
+  for (const l of lines) {
+    const code = l.reprt_code || '11011'
+    const key = `${l.bsns_year}·${code}`
+    if (!reports.some(r => r.key === key)) {
+      reports.push({ key, code, year: l.bsns_year,
+                     label: REPORTS[code] || '보고서',
+                     annual: code === '11011' })
+    }
+  }
+  reports.sort((a, b) => (a.annual === b.annual ? b.year - a.year : a.annual ? -1 : 1))
+
+  const activeReport = reports.find(r => r.key === report) || reports[0]
+  const inReport = lines.filter(
+    l => `${l.bsns_year}·${l.reprt_code || '11011'}` === activeReport?.key)
+
+  const divisions = DIVISIONS.filter(d => inReport.some(l => l.fs_div === d.key))
   const activeFs = divisions.some(d => d.key === fsDiv) ? fsDiv : divisions[0]?.key
-  const inDivision = lines.filter(l => l.fs_div === activeFs)
+  const inDivision = inReport.filter(l => l.fs_div === activeFs)
 
   const available = STATEMENTS.filter(s => inDivision.some(l => l.sj_div === s.key))
   const activeSj = available.some(s => s.key === sjDiv) ? sjDiv : available[0]?.key
@@ -125,6 +152,37 @@ export default function CompanyDetail({ companyId, onBack }) {
           </div>
         ) : (
           <>
+            {/* 보고서 종류 — 사업보고서 / 반기 / 분기 */}
+            {reports.length > 1 && (
+              <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
+                {reports.map(r => (
+                  <button
+                    key={r.key}
+                    onClick={() => setReport(r.key)}
+                    style={{
+                      padding: '6px 16px', borderRadius: 8, fontSize: 13, cursor: 'pointer',
+                      border: `1px solid ${activeReport?.key === r.key ? '#1a3a6c' : '#dde2ea'}`,
+                      background: activeReport?.key === r.key ? '#1a3a6c' : '#fff',
+                      color: activeReport?.key === r.key ? '#fff' : '#555',
+                      fontWeight: 700,
+                    }}
+                  >
+                    {r.year} {r.label}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {activeReport && !activeReport.annual && (
+              <div style={{
+                padding: '8px 14px', marginBottom: 10, borderRadius: 8, fontSize: 12,
+                background: '#fdf6f0', border: '1px solid #f0dcc8', color: '#8a5a1a',
+              }}>
+                검토만 거친 중간 수치입니다 — 감사받은 금액이 아닙니다.
+                손익은 <b>당기 누적 · 전년 동기</b> 기준이고 전전기는 제공되지 않습니다.
+              </div>
+            )}
+
             {/* 연결 / 별도 */}
             <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
               {divisions.map(d => (
@@ -180,8 +238,8 @@ export default function CompanyDetail({ companyId, onBack }) {
                   <tr style={{ background: '#f8fafd' }}>
                     <th style={th('left')}>계정</th>
                     <th style={th('right')}>당기</th>
-                    <th style={th('right')}>전기</th>
-                    <th style={th('right')}>전전기</th>
+                    <th style={th('right')}>{activeReport?.annual ? '전기' : '전년 동기'}</th>
+                    {activeReport?.annual && <th style={th('right')}>전전기</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -195,7 +253,9 @@ export default function CompanyDetail({ companyId, onBack }) {
                       </td>
                       <td style={td}>{fmt(l.thstrm_amount)}</td>
                       <td style={td}>{fmt(l.frmtrm_amount)}</td>
-                      <td style={td}>{fmt(l.bfefrmtrm_amount)}</td>
+                      {activeReport?.annual && (
+                        <td style={td}>{fmt(l.bfefrmtrm_amount)}</td>
+                      )}
                     </tr>
                   ))}
                 </tbody>

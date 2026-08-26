@@ -40,6 +40,8 @@ class CompanySchema(CompanyListItem):
 
 
 class FinancialLine(BaseModel):
+    bsns_year: Optional[int] = None
+    reprt_code: Optional[str] = None
     fs_div: Optional[str] = None
     sj_div: Optional[str] = None
     sj_nm: Optional[str] = None
@@ -63,10 +65,23 @@ class FinancialsCollected(BaseModel):
     by_statement: dict[str, int]
 
 
-class FinancialsSummary(BaseModel):
-    """수집 결과 요약 — 연결·별도를 모두 받으므로 목록으로 돌려준다."""
+class ReportCollected(BaseModel):
+    """보고서 한 건의 수집 결과.
+
+    전기말 사업보고서와 당기중 최신 분·반기보고서를 함께 받으므로 목록이 된다.
+    """
     bsns_year: int
+    reprt_code: str
+    report_label: str      # "사업보고서" / "반기보고서" / "3분기보고서"
+    period_end: Optional[str] = None    # "2026.06"
     collected: list[FinancialsCollected]
+
+
+class FinancialsSummary(BaseModel):
+    """수집 결과 요약 — 보고서별 · 연결/별도별로 나눠 돌려준다."""
+    bsns_year: int         # 사업보고서 기준 연도 (기존 호환)
+    reports: list[ReportCollected] = []
+    collected: list[FinancialsCollected]    # 사업보고서 몫 (기존 호환)
     message: str
 
 
@@ -154,6 +169,9 @@ class ExportSummary(BaseModel):
 class SectionLine(BaseModel):
     id: int
     doc_label: Optional[str] = None
+    report_label: Optional[str] = None   # 사업보고서 / 반기보고서 …
+    reprt_code: Optional[str] = None
+    bsns_year: Optional[int] = None
     level: Optional[int] = None
     title: str
     parent: Optional[str] = None
@@ -164,11 +182,24 @@ class SectionLine(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class SectionsSummary(BaseModel):
+class SectionsCollected(BaseModel):
+    """보고서 한 건의 원문 수집 결과."""
     rcept_no: str
     bsns_year: Optional[int] = None
-    report_nm: Optional[str] = None    # 어느 보고서를 받았는지
+    report_nm: Optional[str] = None
+    report_label: Optional[str] = None
     documents: dict[str, int]      # 문서별 섹션 수
+    total_sections: int
+    audit_relevant: int
+    total_chars: int
+
+
+class SectionsSummary(BaseModel):
+    rcept_no: str                  # 사업보고서 접수번호 (기존 호환)
+    bsns_year: Optional[int] = None
+    report_nm: Optional[str] = None    # 어느 보고서를 받았는지
+    reports: list[SectionsCollected] = []
+    documents: dict[str, int]      # 문서별 섹션 수 (전체 합계)
     total_sections: int
     audit_relevant: int
     total_chars: int

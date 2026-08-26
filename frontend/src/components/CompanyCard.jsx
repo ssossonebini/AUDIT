@@ -119,6 +119,7 @@ export default function CompanyCard({ company, onClick, onChanged }) {
           <button
             onClick={handleCollect}
             disabled={busy !== null}
+            title="전기말 사업보고서와 당기중 최신 분·반기보고서를 함께 받습니다"
             style={{
               background: busy === 'fs' ? '#a0b0c8' : ACCENT, color: '#fff',
               border: 'none', borderRadius: 6, padding: '6px 14px',
@@ -137,6 +138,7 @@ export default function CompanyCard({ company, onClick, onChanged }) {
               fontSize: 12, fontWeight: 700,
               cursor: busy ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap',
             }}
+            title="전기말 사업보고서와 당기중 최신 분·반기보고서를 함께 받습니다"
           >
             {busy === 'sec' ? '수집 중...' : '보고서 원문 수집'}
           </button>

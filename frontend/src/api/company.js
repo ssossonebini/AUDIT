@@ -19,11 +19,12 @@ export const collectFinancials = (id, bsnsYear) =>
   api.post(`/companies/${id}/financials`, null,
     { params: bsnsYear ? { bsns_year: bsnsYear } : {} }).then(r => r.data)
 
-export const getFinancials = (id, { bsnsYear, fsDiv, sjDiv } = {}) => {
+export const getFinancials = (id, { bsnsYear, reprtCode, fsDiv, sjDiv } = {}) => {
   const params = {}
-  if (bsnsYear) params.bsns_year = bsnsYear
-  if (fsDiv)    params.fs_div    = fsDiv
-  if (sjDiv)    params.sj_div    = sjDiv
+  if (bsnsYear)  params.bsns_year  = bsnsYear
+  if (reprtCode) params.reprt_code = reprtCode
+  if (fsDiv)     params.fs_div     = fsDiv
+  if (sjDiv)     params.sj_div     = sjDiv
   return api.get(`/companies/${id}/financials`, { params }).then(r => r.data)
 }
 

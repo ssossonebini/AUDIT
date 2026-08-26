@@ -336,8 +336,11 @@ class ReportSection(Base):
     document.xml 은 본문만 8MB가 넘어 통째로 두면 읽을 수 없다. 목차 단위로
     쪼개 두고, 분석 때 필요한 구간만 골라 읽는다 (기준서 스킬과 같은 방식).
 
-    주석은 SECTION-3 으로 내려가지 않고 SECTION-2 안에 TITLE 이 평평하게
-    나열되므로, level 3 은 그 TITLE 들을 가리킨다.
+    주석은 SECTION-3 으로 내려가지 않고 SECTION-2 안의 TABLE-GROUP 에 하나씩
+    들어 있다. level 3 은 그 TITLE 들을 가리킨다.
+
+    전기말 사업보고서와 당기중 최신 분·반기보고서를 함께 담으므로, 어느
+    보고서에서 온 구간인지는 reprt_code 로 가른다.
     """
     __tablename__ = "report_sections"
 
@@ -345,8 +348,10 @@ class ReportSection(Base):
     company_id = Column(Integer, ForeignKey("companies.id"), index=True)
 
     rcept_no   = Column(String, index=True)   # 어느 보고서에서 왔는지
-    doc_label  = Column(String)               # 본문 / 첨부(00760) …
+    doc_label  = Column(String)               # 본문 / 감사보고서 / 검토보고서 …
     bsns_year  = Column(Integer, index=True)
+    reprt_code = Column(String, index=True)   # 11011 사업 / 11012 반기 / 11013·11014 분기
+    report_nm  = Column(String)               # 사업보고서 (2025.12)
 
     level      = Column(Integer, index=True)  # 1 대분류 / 2 중분류 / 3 주석 등
     title      = Column(String, index=True)
@@ -360,3 +365,9 @@ class ReportSection(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     company = relationship("Company", back_populates="sections")
+
+    @property
+    def report_label(self) -> str:
+        """화면에 쓸 보고서 이름. 옛 행은 reprt_code 가 비어 있다."""
+        from app.crawler.dart_client import REPRT_LABELS
+        return REPRT_LABELS.get(self.reprt_code or "", "사업보고서")

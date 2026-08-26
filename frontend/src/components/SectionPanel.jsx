@@ -11,22 +11,37 @@ const ACCENT = '#1a5c2e'
 
 export default function SectionPanel({ companyId, rows }) {
   const [auditOnly, setAuditOnly] = useState(true)
+  const [report, setReport] = useState(null)
   const [doc, setDoc] = useState(null)
   const [openId, setOpenId] = useState(null)
   const [body, setBody] = useState(null)
   const [loading, setLoading] = useState(false)
 
+  // 전기말 사업보고서와 당기중 분·반기보고서를 함께 담는다. 보고서를 먼저
+  // 고르고, 그 안에서 본문·감사보고서·검토보고서를 고른다.
+  const reports = useMemo(() => {
+    const seen = []
+    for (const r of rows) {
+      const label = r.report_label || '사업보고서'
+      if (!seen.includes(label)) seen.push(label)
+    }
+    return seen.sort((a, b) => (a === '사업보고서' ? -1 : b === '사업보고서' ? 1 : 0))
+  }, [rows])
+
+  const activeReport = report && reports.includes(report) ? report : reports[0]
+  const inReport = rows.filter(r => (r.report_label || '사업보고서') === activeReport)
+
   const documents = useMemo(() => {
     const seen = []
-    for (const r of rows) if (!seen.includes(r.doc_label)) seen.push(r.doc_label)
+    for (const r of inReport) if (!seen.includes(r.doc_label)) seen.push(r.doc_label)
     return seen
-  }, [rows])
+  }, [rows, activeReport])
 
   const activeDoc = doc && documents.includes(doc) ? doc : documents[0]
 
   // 세는 범위는 지금 보고 있는 문서다. 전체 합계를 보여주면 목록에 뜬 줄
   // 수와 맞지 않아 구간이 사라진 것처럼 보인다.
-  const inDoc = rows.filter(r => r.doc_label === activeDoc)
+  const inDoc = inReport.filter(r => r.doc_label === activeDoc)
   const shown = inDoc.filter(r => !auditOnly || r.audit_relevant)
   const relevantCount = inDoc.filter(r => r.audit_relevant).length
 
@@ -59,6 +74,35 @@ export default function SectionPanel({ companyId, rows }) {
 
   return (
     <>
+      {reports.length > 1 && (
+        <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
+          {reports.map(r => (
+            <button
+              key={r}
+              onClick={() => { setReport(r); setDoc(null); setOpenId(null) }}
+              style={{
+                padding: '6px 16px', borderRadius: 8, fontSize: 13, cursor: 'pointer',
+                border: `1px solid ${activeReport === r ? '#1a3a6c' : '#dde2ea'}`,
+                background: activeReport === r ? '#1a3a6c' : '#fff',
+                color: activeReport === r ? '#fff' : '#555', fontWeight: 700,
+              }}
+            >
+              {r}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {activeReport && activeReport !== '사업보고서' && (
+        <div style={{
+          padding: '8px 14px', marginBottom: 10, borderRadius: 8, fontSize: 12,
+          background: '#fdf6f0', border: '1px solid #f0dcc8', color: '#8a5a1a',
+        }}>
+          중간보고서 주석은 <b>직전 연차보고서 이후의 변동</b>만 담은 요약본입니다
+          (K-IFRS 1034). 전체 명세는 사업보고서 쪽을 보세요.
+        </div>
+      )}
+
       <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
         {documents.map(d => (
           <button

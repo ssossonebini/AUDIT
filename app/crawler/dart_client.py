@@ -33,6 +33,17 @@ REPRT_HALF = "11012"
 REPRT_Q1 = "11013"
 REPRT_Q3 = "11014"
 
+REPRT_LABELS = {
+    REPRT_ANNUAL: "사업보고서",
+    REPRT_HALF: "반기보고서",
+    REPRT_Q1: "1분기보고서",
+    REPRT_Q3: "3분기보고서",
+}
+
+# 정기보고서 이름은 「사업보고서 (2025.12)」 처럼 괄호 안에 **기간 종료월**이
+# 붙는다. [기재정정] 같은 접두어가 앞에 오므로 search 로 찾는다.
+PERIODIC_NAME = re.compile(r"(사업|반기|분기)보고서\s*\((\d{4})\.(\d{2})")
+
 TIMEOUT = 30
 
 # status 000 정상 / 013 조회된 데이터 없음. 나머지는 오류로 다룬다.
@@ -240,13 +251,22 @@ def parse_amount(value: Optional[str]) -> Optional[int]:
             return None
 
 
-def prior_amount(row: dict) -> Optional[int]:
+def prior_amount(row: dict, cumulative: bool = True) -> Optional[int]:
     """전기 금액. 재무제표 구분과 보고서 종류에 따라 필드가 다르다.
 
-    분기·반기의 손익계산서(IS/CIS)는 frmtrm_amount 가 비어 있고
-    frmtrm_q_amount 에 값이 온다. 재무상태표(BS)는 분기에도
-    frmtrm_amount 를 쓴다.
+    분기·반기의 손익계산서(IS/CIS)는 frmtrm_amount 가 비어 있고 대신 두 값이
+    온다 — frmtrm_q_amount(전기 3개월) 와 frmtrm_add_amount(전기 누적).
+    당기를 누적(thstrm_add_amount)으로 읽으면서 전기를 3개월로 읽으면
+    **전년 동기 대비가 조용히 어긋난다.** 반기라면 두 배로 벌어진다.
+    그래서 당기와 같은 기준을 먼저 찾는다.
+
+    재무상태표(BS)는 시점 값이라 분기에도 frmtrm_amount 를 쓴다.
     """
+    if cumulative:
+        value = parse_amount(row.get("frmtrm_add_amount"))
+        if value is not None:
+            return value
+
     value = parse_amount(row.get("frmtrm_amount"))
     if value is None:
         value = parse_amount(row.get("frmtrm_q_amount"))
@@ -399,6 +419,58 @@ def tag_filing(report_nm: str) -> Optional[str]:
         if any(kw in name for kw in keywords):
             return tag
     return None
+
+
+def parse_periodic_report(
+    report_nm: str, fiscal_month: int = 12
+) -> Optional[dict]:
+    """정기보고서 이름에서 (보고서 종류, 사업연도) 를 읽는다.
+
+    「분기보고서」는 1분기와 3분기가 같은 이름을 쓴다. 구분은 괄호 안의
+    기간 종료월뿐이라, 사업연도 개시월로부터 몇 달이 지났는지로 가른다 —
+    3개월이면 1분기, 9개월이면 3분기다. 12월 결산이 아닌 회사도 이 계산
+    하나로 맞는다 (3월 결산의 1분기는 6월에 끝난다).
+
+    사업연도는 DART 조회 키다. 12월 결산이면 괄호의 연도가 그대로 사업연도지만,
+    그 밖에는 회계연도가 두 역년에 걸치므로 종료 연도에서 한 해를 뺀다 —
+    3월 결산의 「사업보고서 (2026.03)」은 사업연도 2025다.
+
+    Returns:
+        {"kind", "reprt_code", "bsns_year", "period_end"} · 정기보고서가
+        아니면 None. 1·3분기가 아닌 달이 오면 reprt_code 를 비워 둔다.
+    """
+    match = PERIODIC_NAME.search(report_nm or "")
+    if not match:
+        return None
+
+    kind, year, month = match.group(1), int(match.group(2)), int(match.group(3))
+    if not 1 <= month <= 12:
+        return None
+
+    fiscal_month = fiscal_month or 12
+    elapsed = (month - fiscal_month) % 12          # 사업연도 개시 후 경과 개월
+
+    if kind == "사업":
+        reprt_code = REPRT_ANNUAL
+    elif kind == "반기":
+        reprt_code = REPRT_HALF
+    elif elapsed == 3:
+        reprt_code = REPRT_Q1
+    elif elapsed == 9:
+        reprt_code = REPRT_Q3
+    else:
+        logger.warning(f"분기를 가늠하지 못했습니다: {report_nm} (결산 {fiscal_month}월)")
+        reprt_code = None
+
+    end_year = year if month <= fiscal_month else year + 1
+    bsns_year = end_year if fiscal_month == 12 else end_year - 1
+
+    return {
+        "kind": kind,
+        "reprt_code": reprt_code,
+        "bsns_year": bsns_year,
+        "period_end": f"{year}.{month:02d}",
+    }
 
 
 def fiscal_window(today) -> tuple[str, str]:
