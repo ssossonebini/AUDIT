@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import {
-  getCompany, getFinancials, getDisclosures, getFilings, getNews,
+  getCompany, getFinancials, getDisclosures, getFilings, getNews, getSections,
 } from '../api/company'
 import DisclosurePanel from './DisclosurePanel'
 import FilingPanel from './FilingPanel'
 import NewsPanel from './NewsPanel'
+import SectionPanel from './SectionPanel'
 
 const ACCENT = '#1a5c2e'
 
@@ -27,6 +28,7 @@ export default function CompanyDetail({ companyId, onBack }) {
   const [discRows, setDiscRows] = useState([])
   const [filings, setFilings] = useState([])
   const [news, setNews] = useState([])
+  const [sections, setSections] = useState([])
   const [section, setSection] = useState('fs')   // 'fs' | 'disc'
   const [sjDiv, setSjDiv]     = useState('BS')
   const [fsDiv, setFsDiv]     = useState('CFS')
@@ -37,9 +39,11 @@ export default function CompanyDetail({ companyId, onBack }) {
     Promise.all([
       getCompany(companyId), getFinancials(companyId),
       getDisclosures(companyId), getFilings(companyId), getNews(companyId),
+      getSections(companyId),
     ])
-      .then(([c, f, d, g, n]) => {
-        setCompany(c); setLines(f); setDiscRows(d); setFilings(g); setNews(n)
+      .then(([c, f, d, g, n, s]) => {
+        setCompany(c); setLines(f); setDiscRows(d)
+        setFilings(g); setNews(n); setSections(s)
       })
       .finally(() => setLoading(false))
   }, [companyId])
@@ -87,6 +91,7 @@ export default function CompanyDetail({ companyId, onBack }) {
         <div style={{ display: 'flex', gap: 0, marginBottom: 16, borderBottom: '1px solid #dde2ea' }}>
           {[
             { key: 'fs',   label: '재무제표',  count: lines.length },
+            { key: 'sec',  label: '원문',      count: sections.length },
             { key: 'disc', label: '주요정보',  count: discRows.length },
             { key: 'filing', label: '공시',    count: filings.length },
             { key: 'news',   label: '뉴스',    count: news.length },
@@ -108,7 +113,8 @@ export default function CompanyDetail({ companyId, onBack }) {
           ))}
         </div>
 
-        {section === 'news' ? <NewsPanel rows={news} />
+        {section === 'sec' ? <SectionPanel companyId={companyId} rows={sections} />
+         : section === 'news' ? <NewsPanel rows={news} />
          : section === 'filing' ? <FilingPanel rows={filings} />
          : section === 'disc' ? <DisclosurePanel rows={discRows} /> : lines.length === 0 ? (
           <div style={{
