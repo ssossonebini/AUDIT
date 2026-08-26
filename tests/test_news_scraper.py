@@ -166,3 +166,41 @@ def test_classify_returns_untagged_when_the_call_fails(monkeypatch):
     result = ns.classify("제목", "삼성전자", "key")
 
     assert result == {"tag": None, "reason": ""}
+
+
+# ── 놓쳤던 기사 ────────────────────────────────────────────────────
+
+SANCTION = "금융위, '회계처리 위반' 영풍에 과징금 204억…고려아연 84억"
+
+
+def test_accounting_sanction_headline_survives_the_noise_filter():
+    """회계처리기준 위반 과징금은 감사와 가장 직접 맞닿는 사건이다."""
+    assert ns.is_noise(SANCTION) is False
+
+
+def test_plant_shutdown_is_not_mistaken_for_stock_chatter():
+    """'공장중단' 에 '장중' 이 들어 있어 조업정지 기사가 잘려나갔다."""
+    assert ns.is_noise("영풍 석포제련소 공장중단 명령") is False
+    assert ns.is_noise("영풍 조업정지 처분 취소 소송") is False
+
+
+def test_genuine_stock_chatter_is_still_dropped():
+    for title in ("영풍 목표주가 상향", "코스피 마감 시황", "오늘의 테마주"):
+        assert ns.is_noise(title) is True, title
+
+
+def test_query_angles_use_or_not_juxtaposition():
+    """띄어쓴 낱말은 Google 에서 AND 로 묶인다.
+
+    '소송 제재' 는 둘을 모두 담은 기사만 걸러, 과징금 기사를 놓쳤다.
+    """
+    for angle in ns.QUERY_ANGLES:
+        if " " in angle:
+            assert " OR " in angle, f"'{angle}' 이 AND 로 동작합니다"
+
+
+def test_an_angle_covers_accounting_enforcement():
+    """회계 제재를 겨냥한 갈래가 있어야 일반 질의의 100건 상한에 안 밀린다."""
+    joined = " ".join(ns.QUERY_ANGLES)
+    for word in ("회계", "감리", "과징금", "증선위"):
+        assert word in joined, f"{word} 를 겨냥한 갈래가 없습니다"
