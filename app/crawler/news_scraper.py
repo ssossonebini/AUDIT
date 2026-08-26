@@ -66,9 +66,40 @@ def _session() -> requests.Session:
     return s
 
 
+# 법인격 표기. DART 가 주는 이름은 '(주)영풍'·'삼성전자주식회사' 인데 기사
+# 제목은 '영풍'·'삼성전자' 라고 쓴다. 따옴표로 묶은 구문 검색에서는 이 차이가
+# 그대로 불일치가 되어, 영풍의 금융위 과징금 기사가 통째로 빠졌다.
+_LEGAL_FORMS = (
+    r"주식회사|유한회사|유한책임회사|합자회사|합명회사"
+    r"|재단법인|사단법인|의료법인|학교법인"
+    r"|㈜|㈜|\(주\)|\(유\)|\(재\)|\(사\)|\(학\)|\(의\)"
+)
+_LEGAL_PREFIX = re.compile(rf"^\s*(?:{_LEGAL_FORMS})\s*")
+_LEGAL_SUFFIX = re.compile(
+    rf"\s*(?:{_LEGAL_FORMS}"
+    r"|(?:,\s*)?(?:Co\.?\s*,?\s*Ltd\.?|Corporation|Corp\.?|Inc\.?|Limited|Ltd\.?|LLC|PLC)"
+    r")\s*$",
+    re.IGNORECASE,
+)
+
+
+def search_name(corp_name: str) -> str:
+    """뉴스 검색에 쓸 이름 — 법인격 표기를 떼어낸다.
+
+    '영풍' 으로 찾으면 '(주)영풍' 이라 쓴 기사도 함께 걸리지만, 그 반대는
+    성립하지 않는다. 그래서 넓은 쪽으로 정규화한다.
+
+    떼어낸 결과가 한 글자로 남으면 검색어 노릇을 못 하므로 원래 이름을 쓴다.
+    """
+    name = (corp_name or "").strip()
+    for _ in range(2):          # '주식회사 ㈜' 처럼 겹쳐 쓴 경우
+        name = _LEGAL_SUFFIX.sub("", _LEGAL_PREFIX.sub("", name)).strip()
+    return name if len(name) >= 2 else (corp_name or "").strip()
+
+
 def build_query(corp_name: str, angle: str = "") -> str:
     """회사명을 따옴표로 묶어 부분일치를 막고, 갈래 키워드를 덧붙인다."""
-    q = f'"{corp_name}"'
+    q = f'"{search_name(corp_name)}"'
     return f"{q} {angle}".strip()
 
 

@@ -622,8 +622,14 @@ def collect_sections(
     per_document: dict[str, int] = {}
     total_chars = relevant = 0
 
-    for filename, xml_text in documents.items():
-        label = dart_document.document_label(filename)
+    labels = dart_document.document_labels(documents)
+
+    # ZIP 엔트리 순서는 첨부가 먼저 오기도 한다. 본문을 앞에 둬야 화면에서
+    # 처음 열리는 탭이 사업보고서 본문이 된다.
+    ordered = sorted(documents.items(), key=lambda kv: ("_" in kv[0], kv[0]))
+
+    for filename, xml_text in ordered:
+        label = labels[filename]
         try:
             sections = dart_document.parse_sections(xml_text)
         except Exception as e:

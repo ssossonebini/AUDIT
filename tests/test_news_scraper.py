@@ -204,3 +204,39 @@ def test_an_angle_covers_accounting_enforcement():
     joined = " ".join(ns.QUERY_ANGLES)
     for word in ("회계", "감리", "과징금", "증선위"):
         assert word in joined, f"{word} 를 겨냥한 갈래가 없습니다"
+
+
+# ── 회사명 정규화 ──────────────────────────────────────────────────
+#
+# DART 는 '(주)영풍' 을 주지만 기사 제목은 '영풍' 이라고 쓴다. 따옴표로 묶은
+# 구문 검색에서는 이 차이가 그대로 불일치가 되어 과징금 기사가 통째로 빠졌다.
+
+def test_legal_form_is_stripped_from_the_search_name():
+    for raw in ("(주)영풍", "㈜영풍", "주식회사 영풍", "영풍"):
+        assert ns.search_name(raw) == "영풍", raw
+
+
+def test_trailing_legal_form_is_stripped_too():
+    assert ns.search_name("삼성전자주식회사") == "삼성전자"
+    assert ns.search_name("에스케이하이닉스(주)") == "에스케이하이닉스"
+    assert ns.search_name("현대자동차 주식회사") == "현대자동차"
+
+
+def test_english_legal_form_is_stripped():
+    assert ns.search_name("SK Inc.") == "SK"
+    assert ns.search_name("Hyundai Motor Co., Ltd.") == "Hyundai Motor"
+
+
+def test_a_name_that_is_not_a_legal_form_is_left_alone():
+    for raw in ("한국가스공사", "영풍제지", "주성엔지니어링"):
+        assert ns.search_name(raw) == raw, raw
+
+
+def test_a_name_that_would_vanish_keeps_its_original_form():
+    """떼어내고 한 글자만 남으면 검색어 노릇을 못 한다."""
+    assert ns.search_name("(주)티") == "(주)티"
+
+
+def test_the_query_uses_the_normalized_name():
+    assert ns.build_query("(주)영풍") == '"영풍"'
+    assert ns.build_query("(주)영풍", "회계 OR 과징금") == '"영풍" 회계 OR 과징금'

@@ -123,13 +123,51 @@ def decode_xml(raw: bytes, name: str = "") -> str:
     return raw.decode("utf-8", errors="replace")
 
 
-def document_label(filename: str) -> str:
-    """엔트리 이름으로 문서 종류를 가늠한다.
+_DOC_NAME = re.compile(r"<DOCUMENT-NAME[^>]*>(.*?)</DOCUMENT-NAME>", re.S)
 
-    본문은 {접수번호}.xml, 첨부는 {접수번호}_00760.xml 처럼 접미사가 붙는다.
-    """
+
+def _entry_suffix(filename: str) -> str:
+    """{접수번호}_00760.xml → 00760. 본문에는 접미사가 없다."""
     stem = filename.rsplit("/", 1)[-1].rsplit(".", 1)[0]
-    return "본문" if "_" not in stem else f"첨부({stem.split('_')[-1]})"
+    return stem.split("_")[-1] if "_" in stem else ""
+
+
+def document_label(filename: str, xml_text: str = "") -> str:
+    """문서 종류 이름.
+
+    ZIP 엔트리 이름은 {접수번호}_00760.xml 처럼 일련번호일 뿐이라 '첨부(00760)'
+    으로는 무엇인지 알 수 없다. 문서 첫머리의 <DOCUMENT-NAME> 에 '감사보고서' ·
+    '연결감사보고서' 처럼 실제 이름이 들어 있으므로 그것을 먼저 쓴다.
+    """
+    match = _DOC_NAME.search(xml_text or "")
+    if match:
+        name = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", match.group(1))).strip()
+        if name:
+            return name
+
+    suffix = _entry_suffix(filename)
+    return f"첨부({suffix})" if suffix else "본문"
+
+
+def document_labels(documents: dict[str, str]) -> dict[str, str]:
+    """엔트리마다 서로 겹치지 않는 이름을 붙인다.
+
+    <DOCUMENT-NAME> 이 같은 첨부가 둘 있으면 이름만으로는 구분되지 않아 두
+    문서의 구간이 한 탭에 섞인다. 뒤에 온 쪽에 일련번호를 덧붙여 갈라둔다.
+    """
+    labels: dict[str, str] = {}
+    seen: dict[str, int] = {}
+
+    for filename, xml_text in documents.items():
+        label = document_label(filename, xml_text)
+        if label in seen:
+            seen[label] += 1
+            label = f"{label} ({_entry_suffix(filename) or seen[label]})"
+        else:
+            seen[label] = 1
+        labels[filename] = label
+
+    return labels
 
 
 # ── 파싱 ───────────────────────────────────────────────────────────

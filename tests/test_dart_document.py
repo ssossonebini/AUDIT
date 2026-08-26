@@ -340,3 +340,29 @@ def test_a_bare_less_than_in_body_text_is_escaped():
 def test_a_spaced_pseudo_tag_is_kept_as_text():
     """< TV 시장점유율 추이 > 는 속성 꼴이 아니므로 태그가 아니다."""
     assert dd.escape_stray_markup("< TV 추이 >") == "&lt; TV 추이 >"
+
+
+# ── 첨부 문서 이름 ─────────────────────────────────────────────────
+
+def test_attachment_is_named_from_the_document_itself():
+    """'첨부(00760)' 으로는 무엇인지 알 수 없다. 문서가 제 이름을 갖고 있다."""
+    xml = '<DOCUMENT><DOCUMENT-NAME ACODE="11011">감사보고서</DOCUMENT-NAME></DOCUMENT>'
+    assert dd.document_label("20260317000753_00760.xml", xml) == "감사보고서"
+
+
+def test_label_falls_back_to_the_entry_number():
+    assert dd.document_label("20260317000753_00760.xml") == "첨부(00760)"
+    assert dd.document_label("20260317000753.xml") == "본문"
+
+
+def test_documents_that_share_a_name_stay_apart():
+    """이름이 겹치면 두 문서의 구간이 한 탭에 섞인다."""
+    same = "<DOCUMENT><DOCUMENT-NAME>감사보고서</DOCUMENT-NAME></DOCUMENT>"
+    labels = dd.document_labels({
+        "20260317000753.xml": "<DOCUMENT><DOCUMENT-NAME>사업보고서</DOCUMENT-NAME></DOCUMENT>",
+        "20260317000753_00760.xml": same,
+        "20260317000753_00761.xml": same,
+    })
+    assert labels["20260317000753.xml"] == "사업보고서"
+    assert len(set(labels.values())) == 3, f"이름이 겹쳤습니다: {labels}"
+    assert "00761" in labels["20260317000753_00761.xml"]

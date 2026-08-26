@@ -23,10 +23,12 @@ export default function SectionPanel({ companyId, rows }) {
   }, [rows])
 
   const activeDoc = doc && documents.includes(doc) ? doc : documents[0]
-  const shown = rows.filter(r =>
-    r.doc_label === activeDoc && (!auditOnly || r.audit_relevant))
 
-  const relevantCount = rows.filter(r => r.audit_relevant).length
+  // 세는 범위는 지금 보고 있는 문서다. 전체 합계를 보여주면 목록에 뜬 줄
+  // 수와 맞지 않아 구간이 사라진 것처럼 보인다.
+  const inDoc = rows.filter(r => r.doc_label === activeDoc)
+  const shown = inDoc.filter(r => !auditOnly || r.audit_relevant)
+  const relevantCount = inDoc.filter(r => r.audit_relevant).length
 
   const toggle = async (row) => {
     if (openId === row.id) {
@@ -75,7 +77,7 @@ export default function SectionPanel({ companyId, rows }) {
       </div>
 
       <div style={{ display: 'flex', gap: 6, marginBottom: 12, alignItems: 'center' }}>
-        {[[true, `감사 관련 ${relevantCount}`], [false, `전체 ${rows.length}`]].map(
+        {[[true, `감사 관련 ${relevantCount}`], [false, `전체 ${inDoc.length}`]].map(
           ([value, label]) => (
             <button
               key={String(value)}
