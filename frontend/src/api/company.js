@@ -54,3 +54,6 @@ export const collectNews = (id) =>
 
 export const getNews = (id, { tag } = {}) =>
   api.get(`/companies/${id}/news`, { params: tag ? { tag } : {} }).then(r => r.data)
+
+export const exportAnalysis = (id) =>
+  api.post(`/companies/${id}/export`).then(r => r.data)

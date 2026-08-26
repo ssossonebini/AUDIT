@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import {
-  collectFinancials, collectDisclosures, collectFilings, collectNews, deleteCompany,
+  collectFinancials, collectDisclosures, collectFilings, collectNews,
+  exportAnalysis, deleteCompany,
 } from '../api/company'
 
 const ACCENT = '#1a5c2e'
@@ -27,6 +28,7 @@ export default function CompanyCard({ company, onClick, onChanged }) {
   const handleDisclosure = run('disc', collectDisclosures)
   const handleFilings    = run('filing', collectFilings)
   const handleNews       = run('news', collectNews)
+  const handleExport     = run('export', exportAnalysis)
 
   const handleDelete = async (e) => {
     e.stopPropagation()
@@ -153,6 +155,18 @@ export default function CompanyCard({ company, onClick, onChanged }) {
             }}
           >
             {busy === 'news' ? '수집 중...' : '뉴스 수집'}
+          </button>
+          <button
+            onClick={handleExport}
+            disabled={busy !== null}
+            style={{
+              background: busy === 'export' ? '#a0b0c8' : '#1a3a6c', color: '#fff',
+              border: 'none', borderRadius: 6, padding: '6px 14px',
+              fontSize: 12, fontWeight: 700, marginTop: 4,
+              cursor: busy ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap',
+            }}
+          >
+            {busy === 'export' ? '생성 중...' : '📤 분석자료 내보내기'}
           </button>
           <button
             onClick={handleDelete}

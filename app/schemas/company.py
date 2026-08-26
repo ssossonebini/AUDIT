@@ -140,3 +140,11 @@ class NewsSummary(BaseModel):
     untagged: int
     ai_used: bool
     message: str
+
+
+class ExportSummary(BaseModel):
+    root: str
+    files: list[str]
+    chars: dict[str, int]
+    approx_tokens: int          # 한국어 대략 1.7자 = 1토큰
+    message: str

@@ -10,7 +10,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.core import workspace
+from app.core import exporter, workspace
 from app.db.database import get_db
 from app.db.models import (
     Company, CompanyNews, DisclosureFiling, DisclosureItem, FinancialStatement,
@@ -20,6 +20,7 @@ from app.schemas.company import (
     CompanyListItem,
     CompanySchema,
     CorpSearchResult,
+    ExportSummary,
     DisclosureCollected,
     DisclosureLine,
     DisclosuresSummary,
@@ -544,3 +545,32 @@ def list_news(
     if tag:
         q = q.filter(CompanyNews.tag == tag)
     return q.order_by(CompanyNews.published_at.desc()).all()
+
+
+@router.post("/companies/{company_id}/export", response_model=ExportSummary)
+def export_analysis(company_id: int, db: Session = Depends(get_db)):
+    """작업폴더에 00_INPUT.md 와 상세 파일을 쓴다.
+
+    raw_text 는 담지 않는다 — 전부 펼치면 컨텍스트에 들어가지 않는다.
+    다이제스트만 쓰고, 원문이 필요하면 audit.db 를 조회하도록 안내한다.
+    """
+    company = db.query(Company).filter(Company.id == company_id).first()
+    if not company:
+        raise HTTPException(status_code=404, detail="회사를 찾을 수 없습니다.")
+
+    try:
+        result = exporter.export(db, company)
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"파일 쓰기 실패: {e}")
+
+    total_chars = sum(result["chars"].values())
+    entry = result["chars"].get("00_INPUT.md", 0)
+
+    return ExportSummary(
+        root=result["root"],
+        files=result["files"],
+        chars=result["chars"],
+        approx_tokens=round(entry / 1.7),
+        message=f"{len(result['files'])}개 파일 생성 — {result['root']} "
+                f"(00_INPUT.md 약 {round(entry / 1.7):,} 토큰, 전체 {total_chars:,}자)",
+    )
