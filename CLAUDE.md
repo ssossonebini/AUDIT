@@ -113,6 +113,11 @@ npm run dev
 python -m pytest tests/ -q
 ```
 
+테스트는 실제 `audit.db` 와 **네트워크를 모두 차단한 상태**로 돈다
+(`tests/conftest.py`). 대역을 빠뜨리면 조용히 진짜 API 를 부르는 대신
+`NetworkAccessInTests` 로 즉시 실패한다 — 키가 없는 환경에서만 통과하고
+로컬에서만 깨지는 사고를 한 번 겪었다.
+
 ---
 
 ## 분석 작업 (Claude Code에서)

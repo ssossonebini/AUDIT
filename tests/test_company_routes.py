@@ -85,6 +85,7 @@ def test_collect_financials_stores_both_divisions_for_one_year(client, monkeypat
     """연결과 별도를 모두 받아야 한다. 감사 대상은 별도인 경우가 많다."""
     monkeypatch.setattr(dart_client, "fetch_company",
                         lambda code: {"corp_name": "삼성전자"})
+    monkeypatch.setattr(dart_client, "fetch_disclosure_list", lambda *a, **k: [])
     calls = []
 
     def fake_fetch(corp_code, year, fs_div="CFS", reprt_code=None):
@@ -104,6 +105,7 @@ def test_collect_financials_stores_both_divisions_for_one_year(client, monkeypat
     # 감사대상연도(2026)의 사업보고서는 아직 없으므로 직전 연도를 쓴다
     assert summary["bsns_year"] == 2025
     # 연도별로 반복 호출하지 않는다 — 구분별로 한 번씩만
+    # (중간보고서는 위에서 목록을 비워 배제했다)
     assert calls == [(2025, "CFS"), (2025, "OFS")]
     assert {c["fs_div"] for c in summary["collected"]} == {"CFS", "OFS"}
 
@@ -114,6 +116,7 @@ def test_collect_financials_stores_both_divisions_for_one_year(client, monkeypat
 def test_financials_can_be_filtered_by_division(client, monkeypatch):
     monkeypatch.setattr(dart_client, "fetch_company",
                         lambda code: {"corp_name": "삼성전자"})
+    monkeypatch.setattr(dart_client, "fetch_disclosure_list", lambda *a, **k: [])
 
     def fake_fetch(corp_code, year, fs_div="CFS", reprt_code=None):
         amount = "3,000" if fs_div == "CFS" else "1,500"
@@ -134,6 +137,7 @@ def test_collect_keeps_going_when_one_division_is_absent(client, monkeypatch):
     """종속기업이 없으면 연결재무제표를 제출하지 않는다. 별도만 저장하면 된다."""
     monkeypatch.setattr(dart_client, "fetch_company",
                         lambda code: {"corp_name": "비상장회사"})
+    monkeypatch.setattr(dart_client, "fetch_disclosure_list", lambda *a, **k: [])
     seen = []
 
     def fake_fetch(corp_code, year, fs_div="CFS", reprt_code=None):
@@ -159,6 +163,7 @@ def test_collect_reports_a_real_dart_error_instead_of_swallowing_it(client, monk
     """013(데이터 없음)이 아닌 오류는 삼키면 안 된다 — 한도 초과 등."""
     monkeypatch.setattr(dart_client, "fetch_company",
                         lambda code: {"corp_name": "삼성전자"})
+    monkeypatch.setattr(dart_client, "fetch_disclosure_list", lambda *a, **k: [])
 
     def over_limit(corp_code, year, fs_div="CFS", reprt_code=None):
         raise dart_client.DartError("020")
@@ -175,6 +180,7 @@ def test_collect_reports_a_real_dart_error_instead_of_swallowing_it(client, monk
 def test_recollecting_a_year_replaces_rather_than_duplicates(client, monkeypatch):
     monkeypatch.setattr(dart_client, "fetch_company",
                         lambda code: {"corp_name": "삼성전자"})
+    monkeypatch.setattr(dart_client, "fetch_disclosure_list", lambda *a, **k: [])
     monkeypatch.setattr(dart_client, "fetch_financials",
                         lambda *a, **k: [_annual_row("BS", "자산총계", 1, "1", "2", "3")])
 
