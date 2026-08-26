@@ -224,3 +224,22 @@ def test_every_xml_entry_in_the_zip_is_returned(monkeypatch):
     assert {dd.document_label(n) for n in documents} == {
         "본문", "첨부(00760)", "첨부(00761)",
     }
+
+
+def test_keywords_cover_the_accounts_that_focus_areas_target():
+    """중점심사 이슈에 대응하는 주석이 표시에서 빠지면 그 항목을 통째로 놓친다.
+
+    투자부동산이 실제로 빠져 있었고, 2026년 중점심사 이슈 중 하나였다.
+    """
+    for account in (
+        "투자부동산", "유형자산", "무형자산", "개발비", "영업권",
+        "퇴직급여", "파생상품", "공정가치", "주식기준보상",
+        "정부보조금", "건설계약", "이연법인세", "계속기업",
+    ):
+        assert dd.is_audit_relevant(account), f"{account} 가 감사 관련에서 빠졌습니다"
+
+
+def test_keywords_still_exclude_administrative_sections():
+    for section in ("VII. 주주에 관한 사항", "VIII. 임원 및 직원 등에 관한 사항",
+                    "전문가의 확인"):
+        assert dd.is_audit_relevant(section) is False, f"{section} 이 잘못 표시됐습니다"
