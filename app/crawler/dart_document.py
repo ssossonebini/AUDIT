@@ -14,6 +14,14 @@
 - **엄밀한 XML 이 아니다.** 이스케이프되지 않은 & 가 972개(R&D 등),
   < 가 8개(`< TV 시장점유율 추이 >`) 있다. ElementTree 는 실패하므로
   lxml 의 recover=True 로 읽는다.
+- **꺾쇠로 감싼 한글 표기는 recover 로 못 고친다.** 영풍 제75기에는
+  `<당기말>` · `<전기>` 같은 표기가 24곳 있는데, 한글은 XML 이름으로
+  유효해서 lxml 이 이것을 **여는 태그로 인식한다.** 닫는 태그가 없으니
+  뒤따르는 요소가 전부 그 안으로 끌려 들어가 SECTION-1 11개가 서로
+  중첩됐고, 구간 수가 43 → 124 로 부풀었다. 삼성전자가 무사했던 것은
+  그 문서의 꺾쇠 표기가 `< TV ... >` 처럼 공백을 품어 lxml 이 버렸기
+  때문일 뿐이다. 파싱 전에 escape_stray_markup() 으로 태그가 아닌 `<` 를
+  &lt; 로 바꾼다.
 - 목차는 SECTION-1(14) → SECTION-2(43) 이고 제목은 각 섹션의 <TITLE> 이다.
 - **주석은 SECTION-3 으로 내려가지 않는다.** 「3. 연결재무제표 주석」 SECTION-2
   아래에 TABLE-GROUP 34개가 놓이고, 각 TABLE-GROUP 이 TITLE 을 하나씩 갖는다.
@@ -126,10 +134,43 @@ def document_label(filename: str) -> str:
 
 # ── 파싱 ───────────────────────────────────────────────────────────
 
+# 태그로 볼 수 있는 것만 추린다. 이름은 ASCII 로 시작해야 하고, 속성은
+# `이름=값` 꼴이어야 한다. 이 둘을 요구해야 <당기말> 도, < TV 점유율 > 도
+# 태그로 오인되지 않는다.
+_NAME = r"[A-Za-z_:][A-Za-z0-9_.:-]*"
+_ATTRS = rf"""(?:\s+{_NAME}\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'<>]+))*\s*"""
+_MARKUP = re.compile(
+    "<(?:"
+    r"!\[CDATA\[.*?\]\]>"          # CDATA
+    r"|!--.*?-->"                  # 주석
+    r"|![^>]*>"                    # DOCTYPE 등
+    r"|\?.*?\?>"                   # 처리 명령
+    rf"|/{_NAME}\s*>"              # 닫는 태그
+    rf"|{_NAME}{_ATTRS}/?>"        # 여는 태그
+    ")|<",                         # 그 밖의 < 는 본문 글자다
+    re.S,
+)
+
+
+def escape_stray_markup(xml_text: str) -> str:
+    """태그가 아닌 `<` 를 &lt; 로 바꾼다.
+
+    한글은 XML 이름으로 유효하다. 그래서 회사가 표 머리에 흔히 쓰는
+    `<당기말>` 같은 표기를 lxml 이 여는 태그로 읽고, 닫는 태그가 없으니
+    recover 모드가 뒤따르는 요소를 전부 그 안으로 밀어 넣는다. 구조가
+    통째로 어긋나므로 파싱 전에 미리 손봐야 한다.
+
+    `>` 는 그대로 둔다 — XML 본문에서 이스케이프 없이도 적법하다.
+    """
+    return _MARKUP.sub(lambda m: m.group(0) if len(m.group(0)) > 1 else "&lt;",
+                       xml_text)
+
+
 def _root(xml_text: str):
     """이스케이프가 깨진 문서라 recover 로 읽는다."""
     parser = etree.XMLParser(recover=True, huge_tree=True)
-    return etree.fromstring(xml_text.encode("utf-8"), parser=parser)
+    return etree.fromstring(escape_stray_markup(xml_text).encode("utf-8"),
+                            parser=parser)
 
 
 def _render_table(table) -> str:
@@ -220,6 +261,20 @@ def _sub_items(section, own_title) -> list[tuple]:
     return items
 
 
+def _owned(section, tag: str) -> list:
+    """자기 몫의 하위 섹션만 고른다.
+
+    iter() 는 자손을 전부 훑으므로, 어떤 이유로든 SECTION-1 이 서로 중첩되면
+    바깥 섹션이 안쪽 섹션의 SECTION-2 까지 자기 것으로 다시 내놓는다. 가장
+    가까운 SECTION-1 조상이 자신인 것만 남겨 중복을 막는다.
+    """
+    return [
+        node for node in section.iter(tag)
+        if next((a for a in node.iterancestors() if a.tag == section.tag), None)
+        is section
+    ]
+
+
 def parse_sections(xml_text: str) -> list[dict]:
     """목차 단위로 쪼갠다.
 
@@ -255,7 +310,7 @@ def parse_sections(xml_text: str) -> list[dict]:
             continue
         name1 = _title_text(t1)
 
-        children = list(s1.iter("SECTION-2"))
+        children = _owned(s1, "SECTION-2")
         if not children:
             _emit(1, name1, "", t1, _text_of(s1))
             continue

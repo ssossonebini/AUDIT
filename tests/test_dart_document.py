@@ -261,3 +261,82 @@ def test_legacy_cp949_documents_are_not_silently_mangled():
 
 def test_undecodable_bytes_fall_back_rather_than_raising():
     assert dd.decode_xml(b"\xff\xfe\x00\x01") is not None
+
+
+# ── 꺾쇠로 감싼 한글 표기 (영풍 제75기) ─────────────────────────────
+
+# 회사가 표 머리에 흔히 쓰는 <당기말> 표기. 한글은 XML 이름으로 유효해서
+# lxml 이 여는 태그로 읽고, 닫는 태그가 없어 뒤따르는 요소를 전부 삼킨다.
+YP_XML = """<?xml version="1.0" encoding="utf-8"?>
+<DOCUMENT>
+<BODY>
+  <SECTION-1>
+    <TITLE>III. 재무에 관한 사항</TITLE>
+    <SECTION-2>
+      <TITLE>3. 연결재무제표 주석</TITLE>
+      <P><당기말></P>
+      <TABLE-GROUP>
+        <TITLE>16. 유형자산</TITLE>
+        <P>손상차손 135,800 백만원을 인식하였습니다.</P>
+      </TABLE-GROUP>
+    </SECTION-2>
+  </SECTION-1>
+  <SECTION-1>
+    <TITLE>V. 회계감사인의 감사의견 등</TITLE>
+    <SECTION-2>
+      <TITLE>3. 제재 등과 관련된 사항</TITLE>
+      <P><전기></P>
+      <P>해당사항 없음</P>
+    </SECTION-2>
+  </SECTION-1>
+</BODY>
+</DOCUMENT>
+"""
+
+
+def test_angle_wrapped_korean_label_is_not_read_as_a_tag():
+    """<당기말> 이 태그로 읽히면 이후 요소가 전부 그 안으로 끌려 들어간다."""
+    root = dd._root(YP_XML)
+    assert root.find(".//당기말") is None, "한글 표기가 태그로 파싱됐습니다"
+
+
+def test_angle_wrapped_label_does_not_nest_the_following_sections():
+    root = dd._root(YP_XML)
+    for s1 in root.iter("SECTION-1"):
+        assert not any(a.tag == "SECTION-1" for a in s1.iterancestors()), \
+            "SECTION-1 이 서로 중첩됐습니다"
+
+
+def test_sections_are_not_duplicated_by_the_stray_angle_bracket():
+    """구간 수가 부풀지 않아야 한다 — 영풍은 43 → 124 로 늘었다."""
+    got = dd.parse_sections(YP_XML)
+    titles = [s["title"] for s in got]
+    assert len(titles) == len(set(titles)), f"중복된 구간: {titles}"
+
+
+def test_the_label_survives_as_body_text():
+    """태그로 오인하지 않되 글자는 버리지 않는다."""
+    got = dd.parse_sections(YP_XML)
+    joined = "\n".join(s["body"] for s in got)
+    assert "<당기말>" in joined
+
+
+def test_content_after_the_label_is_still_reachable():
+    got = dd.parse_sections(YP_XML)
+    유형자산 = _by_title(got, "유형자산")
+    assert "135,800" in 유형자산["body"]
+    assert 유형자산["parent"] == "3. 연결재무제표 주석"
+
+
+def test_real_tags_are_left_alone():
+    text = '<TABLE-GROUP ACLASS="NORMAL"><TD/></TABLE-GROUP><!-- 주석 -->'
+    assert dd.escape_stray_markup(text) == text
+
+
+def test_a_bare_less_than_in_body_text_is_escaped():
+    assert dd.escape_stray_markup("<P>a < b</P>") == "<P>a &lt; b</P>"
+
+
+def test_a_spaced_pseudo_tag_is_kept_as_text():
+    """< TV 시장점유율 추이 > 는 속성 꼴이 아니므로 태그가 아니다."""
+    assert dd.escape_stray_markup("< TV 추이 >") == "&lt; TV 추이 >"
