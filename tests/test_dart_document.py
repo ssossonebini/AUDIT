@@ -243,3 +243,21 @@ def test_keywords_still_exclude_administrative_sections():
     for section in ("VII. 주주에 관한 사항", "VIII. 임원 및 직원 등에 관한 사항",
                     "전문가의 확인"):
         assert dd.is_audit_relevant(section) is False, f"{section} 이 잘못 표시됐습니다"
+
+
+# ── 인코딩 ─────────────────────────────────────────────────────────
+
+def test_utf8_documents_decode_cleanly():
+    assert dd.decode_xml("주석 본문".encode("utf-8")) == "주석 본문"
+
+
+def test_legacy_cp949_documents_are_not_silently_mangled():
+    """구형 보고서에 EUC-KR 이 있다. replace 로 먼저 열면 조용히 깨진다."""
+    raw = "특수관계자와의 거래".encode("cp949")
+
+    assert dd.decode_xml(raw) == "특수관계자와의 거래"
+    assert "�" not in dd.decode_xml(raw), "대체문자가 섞였습니다"
+
+
+def test_undecodable_bytes_fall_back_rather_than_raising():
+    assert dd.decode_xml(b"\xff\xfe\x00\x01") is not None

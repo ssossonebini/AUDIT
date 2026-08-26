@@ -92,10 +92,27 @@ def fetch_document(rcept_no: str) -> dict[str, str]:
         for name in zf.namelist():
             if not name.lower().endswith(".xml"):
                 continue
-            documents[name] = zf.read(name).decode("utf-8", errors="replace")
+            documents[name] = decode_xml(zf.read(name), name)
 
     logger.info(f"원문 {len(documents)}개 파일 수신 ({rcept_no})")
     return documents
+
+
+def decode_xml(raw: bytes, name: str = "") -> str:
+    """UTF-8 을 먼저 보고, 아니면 CP949 로 읽는다.
+
+    최근 보고서는 UTF-8 이지만 구형 문서에는 EUC-KR 이 있다. 처음부터
+    errors="replace" 로 열면 그런 문서가 깨진 글자로 조용히 저장된다 —
+    실패보다 나쁘다. 판독 자체가 안 되는 경우에만 마지막 수단으로 쓴다.
+    """
+    for encoding in ("utf-8", "cp949"):
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+
+    logger.warning(f"인코딩을 판별하지 못해 일부 글자가 깨질 수 있습니다: {name}")
+    return raw.decode("utf-8", errors="replace")
 
 
 def document_label(filename: str) -> str:
