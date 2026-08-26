@@ -148,3 +148,26 @@ class ExportSummary(BaseModel):
     chars: dict[str, int]
     approx_tokens: int          # 한국어 대략 1.7자 = 1토큰
     message: str
+
+
+class SectionLine(BaseModel):
+    id: int
+    doc_label: Optional[str] = None
+    level: Optional[int] = None
+    title: str
+    parent: Optional[str] = None
+    section_no: Optional[str] = None
+    chars: Optional[int] = None
+    audit_relevant: bool = False
+
+    model_config = {"from_attributes": True}
+
+
+class SectionsSummary(BaseModel):
+    rcept_no: str
+    bsns_year: Optional[int] = None
+    documents: dict[str, int]      # 문서별 섹션 수
+    total_sections: int
+    audit_relevant: int
+    total_chars: int
+    message: str

@@ -24,6 +24,7 @@ from app.db.models import (
     FinancialStatement,
     FssArticle,
     FssCaseReport,
+    ReportSection,
 )
 
 logger = logging.getLogger(__name__)
@@ -194,6 +195,30 @@ def _news(db: Session, company: Company) -> list[str]:
     return out
 
 
+def _report_sections(db: Session, company: Company) -> list[str]:
+    """사업보고서 원문의 목차. 본문은 담지 않는다 — 8MB 가 넘는다."""
+    rows = (
+        db.query(ReportSection)
+        .filter(ReportSection.company_id == company.id,
+                ReportSection.audit_relevant.is_(True),
+                ReportSection.chars > 0)
+        .order_by(ReportSection.chars.desc())
+        .all()
+    )
+    if not rows:
+        return []
+
+    out = ["## 사업보고서 원문 — 감사 관련 구간", "",
+           f"{len(rows)}개 구간. 본문은 `report_sections.body` 에 있다.", "",
+           "| 구간 | 상위 | 분량 |", "|---|---|---:|"]
+    for r in rows[:40]:
+        out.append(f"| {r.title} | {r.parent or '–'} | {r.chars:,}자 |")
+    if len(rows) > 40:
+        out.append(f"| … 외 {len(rows) - 40}개 | | |")
+    out.append("")
+    return out
+
+
 def _regulatory(db: Session) -> list[str]:
     """중점심사 이슈와 지적사례 — 회사와 무관한 공통 자료."""
     issues = (
@@ -252,6 +277,9 @@ def _how_to_dig_deeper() -> list[str]:
         "",
         "-- 미분류 공시까지 포함한 전체",
         "SELECT rcept_dt, report_nm, tag FROM disclosure_filings ORDER BY rcept_dt DESC;",
+        "",
+        "-- 사업보고서 주석 본문 (특수관계자·우발부채 등)",
+        "SELECT title, body FROM report_sections WHERE title LIKE '%특수관계자%';",
         "```",
         "",
         "`raw_text` 는 건당 수만 자다. 필요한 건만 골라 읽을 것.",
@@ -332,6 +360,7 @@ def export(db: Session, company: Company) -> dict:
     lines += _disclosures(db, company)
     lines += _filings(db, company)
     lines += _news(db, company)
+    lines += _report_sections(db, company)
     lines += _regulatory(db)
     lines += _how_to_dig_deeper()
 

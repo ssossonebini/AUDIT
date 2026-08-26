@@ -1,4 +1,6 @@
-from sqlalchemy import Column, Integer, BigInteger, String, Text, DateTime, ForeignKey
+from sqlalchemy import (
+    Boolean, Column, Integer, BigInteger, String, Text, DateTime, ForeignKey,
+)
 from sqlalchemy.orm import relationship
 from datetime import datetime
 
@@ -200,6 +202,9 @@ class Company(Base):
     news = relationship(
         "CompanyNews", back_populates="company", cascade="all, delete-orphan"
     )
+    sections = relationship(
+        "ReportSection", back_populates="company", cascade="all, delete-orphan"
+    )
 
     @property
     def has_financials(self) -> bool:
@@ -216,6 +221,10 @@ class Company(Base):
     @property
     def has_news(self) -> bool:
         return bool(self.news)
+
+    @property
+    def has_sections(self) -> bool:
+        return bool(self.sections)
 
 
 class FinancialStatement(Base):
@@ -319,3 +328,35 @@ class CompanyNews(Base):
     created_at   = Column(DateTime, default=datetime.utcnow)
 
     company = relationship("Company", back_populates="news")
+
+
+class ReportSection(Base):
+    """사업보고서 원문의 목차 한 구간.
+
+    document.xml 은 본문만 8MB가 넘어 통째로 두면 읽을 수 없다. 목차 단위로
+    쪼개 두고, 분석 때 필요한 구간만 골라 읽는다 (기준서 스킬과 같은 방식).
+
+    주석은 SECTION-3 으로 내려가지 않고 SECTION-2 안에 TITLE 이 평평하게
+    나열되므로, level 3 은 그 TITLE 들을 가리킨다.
+    """
+    __tablename__ = "report_sections"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    company_id = Column(Integer, ForeignKey("companies.id"), index=True)
+
+    rcept_no   = Column(String, index=True)   # 어느 보고서에서 왔는지
+    doc_label  = Column(String)               # 본문 / 첨부(00760) …
+    bsns_year  = Column(Integer, index=True)
+
+    level      = Column(Integer, index=True)  # 1 대분류 / 2 중분류 / 3 주석 등
+    title      = Column(String, index=True)
+    parent     = Column(String)
+    section_no = Column(String)               # AASSOCNOTE (D-0-3-1-0)
+
+    body       = Column(Text)
+    chars      = Column(Integer)
+    audit_relevant = Column(Boolean, default=False, index=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    company = relationship("Company", back_populates="sections")

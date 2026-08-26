@@ -359,6 +359,9 @@ def fetch_disclosure_list(
             raise
 
         rows = data.get("list", [])
+        # 응답에는 pblntf_ty 가 없다. 요청한 유형을 알고 있으니 여기서 새긴다.
+        for row in rows:
+            row.setdefault("pblntf_ty", pblntf_ty or "")
         items.extend(rows)
 
         if page >= int(data.get("total_page", 1) or 1):

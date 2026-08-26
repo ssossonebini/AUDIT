@@ -57,3 +57,14 @@ export const getNews = (id, { tag } = {}) =>
 
 export const exportAnalysis = (id) =>
   api.post(`/companies/${id}/export`).then(r => r.data)
+
+export const collectSections = (id) =>
+  api.post(`/companies/${id}/sections`).then(r => r.data)
+
+export const getSections = (id, { auditOnly } = {}) =>
+  api.get(`/companies/${id}/sections`, {
+    params: auditOnly ? { audit_only: true } : {},
+  }).then(r => r.data)
+
+export const getSection = (id, sectionId) =>
+  api.get(`/companies/${id}/sections/${sectionId}`).then(r => r.data)

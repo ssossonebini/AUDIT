@@ -14,6 +14,7 @@ from app.core import exporter, workspace
 from app.db.database import get_db
 from app.db.models import (
     Company, CompanyNews, DisclosureFiling, DisclosureItem, FinancialStatement,
+    ReportSection,
 )
 from app.schemas.company import (
     CompanyCreate,
@@ -31,9 +32,11 @@ from app.schemas.company import (
     FinancialsSummary,
     NewsLine,
     NewsSummary,
+    SectionLine,
+    SectionsSummary,
 )
 from app.core.config import settings
-from app.crawler import dart_client, news_scraper
+from app.crawler import dart_client, dart_document, news_scraper
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -574,3 +577,131 @@ def export_analysis(company_id: int, db: Session = Depends(get_db)):
         message=f"{len(result['files'])}개 파일 생성 — {result['root']} "
                 f"(00_INPUT.md 약 {round(entry / 1.7):,} 토큰, 전체 {total_chars:,}자)",
     )
+
+
+@router.post("/companies/{company_id}/sections", response_model=SectionsSummary)
+def collect_sections(
+    company_id: int,
+    rcept_no: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """사업보고서 원문을 받아 목차 단위로 쪼개 저장한다.
+
+    재무제표 API 가 주지 않는 주석과 회사 기재 내용이 여기 있다 —
+    특수관계자 거래, 우발부채, 핵심감사사항 등.
+
+    본문만 8MB 가 넘으므로 통째로 두지 않고 목차로 나눈다. 분석 때는
+    필요한 구간만 골라 읽는다.
+
+    rcept_no 를 주지 않으면 수집해 둔 주요정보에서 가장 최근 사업보고서를 찾는다.
+    """
+    company = db.query(Company).filter(Company.id == company_id).first()
+    if not company:
+        raise HTTPException(status_code=404, detail="회사를 찾을 수 없습니다.")
+
+    target, year = rcept_no, None
+    if not target:
+        target, year = _latest_annual_report(db, company)
+    if not target:
+        raise HTTPException(
+            status_code=404,
+            detail="사업보고서 접수번호를 찾지 못했습니다. 주요정보를 먼저 수집하거나 "
+                   "rcept_no 를 직접 지정해주세요.",
+        )
+
+    documents = _dart_call(dart_document.fetch_document, target)
+    if not documents:
+        raise HTTPException(status_code=404, detail="원문에 XML 이 없습니다.")
+
+    db.query(ReportSection).filter(
+        ReportSection.company_id == company.id,
+        ReportSection.rcept_no == target,
+    ).delete(synchronize_session=False)
+
+    per_document: dict[str, int] = {}
+    total_chars = relevant = 0
+
+    for filename, xml_text in documents.items():
+        label = dart_document.document_label(filename)
+        try:
+            sections = dart_document.parse_sections(xml_text)
+        except Exception as e:
+            logger.exception(f"원문 파싱 실패 ({filename})")
+            raise HTTPException(status_code=502, detail=f"원문 파싱 실패: {e}")
+
+        per_document[label] = len(sections)
+        for s in sections:
+            total_chars += s["chars"]
+            relevant += 1 if s["audit_relevant"] else 0
+            db.add(ReportSection(
+                company_id=company.id, rcept_no=target, doc_label=label,
+                bsns_year=year, level=s["level"], title=s["title"],
+                parent=s["parent"], section_no=s["section_no"],
+                body=s["body"] or None, chars=s["chars"],
+                audit_relevant=s["audit_relevant"],
+            ))
+
+    db.commit()
+    total = sum(per_document.values())
+
+    return SectionsSummary(
+        rcept_no=target, bsns_year=year, documents=per_document,
+        total_sections=total, audit_relevant=relevant, total_chars=total_chars,
+        message=f"사업보고서 원문 {total}개 구간 저장 — 감사 관련 {relevant}개 "
+                f"· 전체 {total_chars:,}자 (접수번호 {target})",
+    )
+
+
+@router.get("/companies/{company_id}/sections", response_model=list[SectionLine])
+def list_sections(
+    company_id: int,
+    audit_only: bool = False,
+    level: Optional[int] = None,
+    db: Session = Depends(get_db),
+):
+    """목차만 돌려준다. 본문은 무거워 별도 조회로 뺀다."""
+    q = db.query(ReportSection).filter(ReportSection.company_id == company_id)
+    if audit_only:
+        q = q.filter(ReportSection.audit_relevant.is_(True))
+    if level:
+        q = q.filter(ReportSection.level == level)
+    return q.order_by(ReportSection.id).all()
+
+
+@router.get("/companies/{company_id}/sections/{section_id}")
+def get_section(company_id: int, section_id: int, db: Session = Depends(get_db)):
+    """구간 하나의 본문."""
+    section = (
+        db.query(ReportSection)
+        .filter(ReportSection.id == section_id,
+                ReportSection.company_id == company_id)
+        .first()
+    )
+    if not section:
+        raise HTTPException(status_code=404, detail="구간을 찾을 수 없습니다.")
+    return {
+        "id": section.id, "title": section.title, "parent": section.parent,
+        "doc_label": section.doc_label, "chars": section.chars,
+        "body": section.body or "",
+    }
+
+
+def _latest_annual_report(db: Session, company: Company) -> tuple[Optional[str], Optional[int]]:
+    """수집해 둔 주요정보에서 가장 최근 사업보고서 접수번호를 찾는다.
+
+    disclosure_filings 에는 없다 — 그쪽은 B·F·I·J 만 모으고 정기공시(A)는
+    대상이 아니기 때문이다. 주요정보는 사업보고서에서 뽑은 것이라
+    payload 의 rcept_no 가 곧 사업보고서 접수번호다.
+    """
+    rows = (
+        db.query(DisclosureItem)
+        .filter(DisclosureItem.company_id == company.id)
+        .order_by(DisclosureItem.bsns_year.desc())
+        .all()
+    )
+    for row in rows:
+        payload = _safe_json(row.payload)
+        rcept_no = payload.get("rcept_no") or row.rcept_no
+        if rcept_no:
+            return rcept_no, row.bsns_year
+    return None, None
